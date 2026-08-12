@@ -1,0 +1,7 @@
+{
+  "model": "deepseek-v4-flash",
+  "provider": "deepseek",
+  "reasoningEffort": "max",
+  "schemaVersion": 1,
+  "serviceTier": null
+}
