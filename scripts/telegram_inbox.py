@@ -68,10 +68,12 @@ DEFAULT_CODEX_AGENT_MODEL = os.environ.get("TELEAGENT_CODEX_MODEL", "gpt-5.6-sol
 DEFAULT_CODEX_AGENT_REASONING_EFFORT = os.environ.get("TELEAGENT_CODEX_REASONING_EFFORT", "high")
 SPARK_CODEX_AGENT_MODEL = "gpt-5.3-codex-spark"
 DEEPSEEK_FLASH_CODEX_AGENT_MODEL = "deepseek-v4-flash"
+DEEPSEEK_PRO_CODEX_AGENT_MODEL = "deepseek-v4-pro"
 SUPPORTED_CODEX_AGENT_MODELS = {
     DEFAULT_CODEX_AGENT_MODEL,
     SPARK_CODEX_AGENT_MODEL,
     DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
+    DEEPSEEK_PRO_CODEX_AGENT_MODEL,
 }
 CODEX_AGENT_MODEL_ALIASES = {
     "default": DEFAULT_CODEX_AGENT_MODEL,
@@ -79,6 +81,7 @@ CODEX_AGENT_MODEL_ALIASES = {
     "sol": DEFAULT_CODEX_AGENT_MODEL,
     "spark": SPARK_CODEX_AGENT_MODEL,
     "ds-flash": DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
+    "ds-pro": DEEPSEEK_PRO_CODEX_AGENT_MODEL,
 }
 LIVE_CODEX_AGENT_MODELS = frozenset(
     SUPPORTED_CODEX_AGENT_MODELS
@@ -644,7 +647,7 @@ def valid_codex_session_for_agent(
             return False
         if not resolved_session.is_relative_to(resolved_sessions_root):
             # DeepSeek-backed agents keep sessions under their own CODEX_HOME
-            # (for example the telegram-ds-codex-home used by ds-flash), so
+            # (for example the telegram-ds-codex-home used by ds-flash/ds-pro), so
             # accept sessions discovered under any codex home in the pane.
             target_pane = str(meta.get("target_pane") or "")
             ds_home_ok = False
@@ -3387,12 +3390,12 @@ def normalize_codex_agent_model(value: str, *, live: bool = False) -> str:
             raise ValueError(
                 "unknown model; use latest (gpt-5.6-sol), "
                 "spark (gpt-5.3-codex-spark), or "
-                "ds-flash (deepseek-v4-flash)"
+                "ds-flash (deepseek-v4-flash) / ds-pro (deepseek-v4-pro)"
             )
         raise ValueError(
             "unknown model; use latest (gpt-5.6-sol), "
             "spark (gpt-5.3-codex-spark), or "
-            "ds-flash (deepseek-v4-flash)"
+            "ds-flash (deepseek-v4-flash) / ds-pro (deepseek-v4-pro)"
         )
     return model
 
@@ -3405,8 +3408,8 @@ def validate_model_reasoning_effort(model: str, effort: str) -> None:
         "xhigh",
     }:
         raise ValueError("Spark reasoning must be low, medium, high, or xhigh")
-    if model == DEEPSEEK_FLASH_CODEX_AGENT_MODEL and effort != "max":
-        raise ValueError("DeepSeek Flash reasoning must be max")
+    if model in {DEEPSEEK_FLASH_CODEX_AGENT_MODEL, DEEPSEEK_PRO_CODEX_AGENT_MODEL} and effort != "max":
+        raise ValueError("DeepSeek reasoning must be max")
 
 
 def parse_live_model_payload(payload: str) -> tuple[str, str | None]:
@@ -3416,13 +3419,13 @@ def parse_live_model_payload(payload: str) -> tuple[str, str | None]:
         raise ValueError(f"invalid quoting: {exc}") from exc
     if not 1 <= len(tokens) <= 2:
         raise ValueError(
-            "usage: /model latest|spark|ds-flash [low|medium|high|xhigh|max|ultra]"
+            "usage: /model latest|spark|ds-flash|ds-pro [low|medium|high|xhigh|max|ultra]"
         )
     model = normalize_codex_agent_model(tokens[0], live=True)
     reasoning_effort = (
         parse_live_reasoning_effort(tokens[1]) if len(tokens) == 2 else None
     )
-    if model == DEEPSEEK_FLASH_CODEX_AGENT_MODEL and reasoning_effort is None:
+    if model in {DEEPSEEK_FLASH_CODEX_AGENT_MODEL, DEEPSEEK_PRO_CODEX_AGENT_MODEL} and reasoning_effort is None:
         reasoning_effort = "max"
     if reasoning_effort is not None:
         validate_model_reasoning_effort(model, reasoning_effort)
@@ -3486,7 +3489,7 @@ def set_codex_model(
     selected_model = normalize_codex_agent_model(model, live=True)
     default_effort = (
         "max"
-        if selected_model == DEEPSEEK_FLASH_CODEX_AGENT_MODEL
+        if selected_model in {DEEPSEEK_FLASH_CODEX_AGENT_MODEL, DEEPSEEK_PRO_CODEX_AGENT_MODEL}
         else "high"
     )
     selected_effort = parse_live_reasoning_effort(reasoning_effort or default_effort)
@@ -3508,10 +3511,10 @@ def set_codex_model(
             flags=re.MULTILINE,
         )
         if not match:
-            if selected_model == DEEPSEEK_FLASH_CODEX_AGENT_MODEL:
+            if selected_model in {DEEPSEEK_FLASH_CODEX_AGENT_MODEL, DEEPSEEK_PRO_CODEX_AGENT_MODEL}:
                 raise RuntimeError(
                     "the running pane is not DeepSeek-backed; "
-                    "use /restart_agent ds-flash to relaunch it as DeepSeek Flash"
+                    "use /restart_agent ds-flash or ds-pro to relaunch it as DeepSeek"
                 )
             raise RuntimeError(f"Codex model selector does not offer {selected_model}")
 
@@ -4614,7 +4617,7 @@ def parse_agent_launch_payload(payload: str) -> tuple[str, str, bool]:
                     "high, xhigh, max, or ultra"
                 )
     if (
-        model == DEEPSEEK_FLASH_CODEX_AGENT_MODEL
+        model in {DEEPSEEK_FLASH_CODEX_AGENT_MODEL, DEEPSEEK_PRO_CODEX_AGENT_MODEL}
         and not reasoning_explicit
     ):
         reasoning_effort = "max"
@@ -5021,14 +5024,15 @@ def handle_update(
             "/kill_agent — stop the agent; keep this listener online\n"
             "/restart_agent [MODEL] [LEVEL] — replace a running agent with a "
             "fresh chat (context is not preserved)\n"
-            "/model latest|spark|ds-flash [LEVEL] — switch model; preserve the current chat\n"
+            "/model latest|spark|ds-flash|ds-pro [LEVEL] — switch model; preserve the current chat\n"
             "/reasoning LEVEL — change the running chat without restarting\n"
             "/agent_status — agent, authentication, and live Codex usage\n\n"
             "Lifecycle commands never accept prompts. MODEL defaults to latest "
             "(gpt-5.6-sol); spark selects gpt-5.3-codex-spark only when explicit. "
-            "ds-flash selects deepseek-v4-flash and relaunches the agent under "
-            "the DeepSeek harness (max reasoning only). If /model ds-flash "
-            "fails on an OpenAI pane, run /restart_agent ds-flash first. "
+            "ds-flash/ds-pro select deepseek-v4-flash / deepseek-v4-pro and "
+            "relaunch the agent under the DeepSeek harness (max reasoning "
+            "only). If /model ds-flash or ds-pro fails on an OpenAI pane, run "
+            "/restart_agent ds-flash or /restart_agent ds-pro first. "
             "LEVEL is one of: none, minimal, low, medium, high, xhigh, max, ultra. "
             "Spark supports low through xhigh.\n\n"
             "**Messages and control**\n"
