@@ -177,6 +177,12 @@ fi
 if [[ "$AGENT_WATCHDOG" -ne 1 ]]; then
   EXTRA_ARGS+=" --no-agent-watchdog"
 fi
+if [[ -n "${TELEAGENT_MAX_AGENT_MESSAGE_CHARS:-}" ]]; then
+  EXTRA_ARGS+=" --max-agent-message-chars $TELEAGENT_MAX_AGENT_MESSAGE_CHARS"
+fi
+if [[ -n "${TELEAGENT_MAX_FINAL_MESSAGE_CHARS:-}" ]]; then
+  EXTRA_ARGS+=" --max-final-message-chars $TELEAGENT_MAX_FINAL_MESSAGE_CHARS"
+fi
 
 LISTENER_COMMAND="python3 scripts/telegram_inbox.py --session $session_q --target-pane $target_q --codex-window $codex_window_q --relay-mode $mode_q --submit-delay $submit_delay_q$EXTRA_ARGS"
 COMMAND="cd $repo_q && source scripts/relay_paths.sh && set +e && mkdir -p $telegram_log_dir_q && while true; do printf '[%s] starting telegram_inbox target=%s mode=%s\n' \"\$(date -Iseconds)\" $target_q $mode_q >> $supervisor_log_q; $LISTENER_COMMAND >> $supervisor_log_q 2>&1 & listener_pid=\$!; printf '%s\n' \"\$listener_pid\" > $listener_pid_file_q; wait \"\$listener_pid\"; rc=\$?; rm -f $listener_pid_file_q; printf '[%s] telegram_inbox exited rc=%s; restarting in 5s\n' \"\$(date -Iseconds)\" \"\$rc\" >> $supervisor_log_q; sleep 5; done"
