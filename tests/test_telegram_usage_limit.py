@@ -291,8 +291,18 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(reasoning, "max")
 
     def test_parse_live_model_payload_rejects_non_max_ds_flash(self) -> None:
-        with self.assertRaisesRegex(ValueError, "DeepSeek Flash reasoning"):
+        with self.assertRaisesRegex(ValueError, "DeepSeek reasoning"):
             telegram_inbox.parse_live_model_payload("ds-flash high")
+
+    def test_parse_live_model_payload_accepts_ds_pro(self) -> None:
+        model, reasoning = telegram_inbox.parse_live_model_payload("ds-pro")
+
+        self.assertEqual(model, "deepseek-v4-pro")
+        self.assertEqual(reasoning, "max")
+
+    def test_parse_live_model_payload_rejects_non_max_ds_pro(self) -> None:
+        with self.assertRaisesRegex(ValueError, "DeepSeek reasoning"):
+            telegram_inbox.parse_live_model_payload("ds-pro high")
 
     def test_parse_agent_launch_payload_accepts_ds_flash_with_max(self) -> None:
         model, reasoning, explicit = telegram_inbox.parse_agent_launch_payload(
@@ -304,7 +314,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertTrue(explicit)
 
     def test_parse_agent_launch_payload_rejects_non_max_ds_flash(self) -> None:
-        with self.assertRaisesRegex(ValueError, "DeepSeek Flash reasoning"):
+        with self.assertRaisesRegex(ValueError, "DeepSeek reasoning"):
             telegram_inbox.parse_agent_launch_payload("ds-flash high")
 
     def test_current_codex_model_detects_deepseek_flash(self) -> None:
@@ -505,9 +515,9 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "fresh chat (context is not preserved)",
             help_text,
         )
-        self.assertIn("/model latest|spark|ds-flash [LEVEL]", help_text)
+        self.assertIn("/model latest|spark|ds-flash|ds-pro [LEVEL]", help_text)
         self.assertIn("MODEL defaults to latest (gpt-5.6-sol)", help_text)
-        self.assertIn("ds-flash selects deepseek-v4-flash", help_text)
+        self.assertIn("ds-flash/ds-pro select deepseek-v4-flash / deepseek-v4-pro", help_text)
         self.assertIn("restart_agent ds-flash", help_text)
         self.assertIn("never accept prompts", help_text)
         self.assertNotIn("-- PROMPT", help_text)
