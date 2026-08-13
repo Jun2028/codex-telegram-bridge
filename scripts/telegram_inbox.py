@@ -52,11 +52,7 @@ TELEGRAM_FILE_DOWNLOAD_LIMIT_BYTES = 20 * 1024 * 1024
 DEFAULT_MAX_INBOUND_DOCUMENT_BYTES = TELEGRAM_FILE_DOWNLOAD_LIMIT_BYTES
 SUPPORTED_INBOUND_DOCUMENT_SUFFIXES = {".pdf", ".txt", ".md"}
 QUICK_ACTIONS_KEYBOARD = {
-    "keyboard": [
-        ["/status", "Any news?"],
-        ["Fix it.", "Faster."],
-        ["It is stagnant? Unhealthy?"],
-    ],
+    "keyboard": [["/status"]],
     "resize_keyboard": True,
 }
 TRANSIENT_HTTP_CODES = {409, 429, 500, 502, 503, 504}
@@ -1641,7 +1637,8 @@ def drain_codex_agent_messages(
     session_text = str(session_path.resolve())
     agent_id = str(meta.get("agent_id") or "")
     size = session_path.stat().st_size
-    same_session = state.get("session_path") == session_text
+    same_agent = bool(agent_id) and state.get("agent_id") == agent_id
+    same_session = same_agent and state.get("session_path") == session_text
     if same_session:
         try:
             offset = int(state.get("offset", 0))
@@ -1662,9 +1659,11 @@ def drain_codex_agent_messages(
             and session_started >= agent_started - agent_registry.SESSION_START_SLOP_SECONDS
         )
         # Read from the beginning only when the embedded session timestamp
-        # proves that this freshly registered agent created the session.
-        # Otherwise tail from EOF so a bad link cannot replay old history.
-        offset = 0 if session_matches_launch else size
+        # proves that a newly registered agent created the session. A path
+        # change within the same agent is never allowed to reset progress: it
+        # may be a transient helper rollout, and replaying it is worse than
+        # waiting for the next newly appended message.
+        offset = 0 if not same_agent and session_matches_launch else size
         write_json_object(
             state_path,
             {
@@ -5037,8 +5036,7 @@ def handle_update(
             "Spark supports low through xhigh.\n\n"
             "**Messages and control**\n"
             "Normal text or PDF/TXT/MD → running agent\n"
-            "Quick-action buttons above the input: /status · Any news? · "
-            "Fix it. · It is stagnant? Unhealthy? · Faster.\n"
+            "Quick-action button above the input: /status\n"
             "/interrupt PROMPT — abort the active turn and submit PROMPT immediately\n"
             "/timed HOURS MESSAGE · /timed list · /timed remove [NUMBER]\n"
             "/recent_messages [N] · /replay_last [N] · /replay_last_long [N] · "
@@ -5622,6 +5620,77 @@ def dispatch_telegram_update(
     return "handled"
 
 
+RELAY_QUEUE_GOAL_PAUSE_GRACE_SECONDS = 60
+RELAY_QUEUE_GOAL_PAUSE_MAX_ATTEMPTS = 3
+
+
+def _deliver_queued_task_via_goal_pause(
+    args: argparse.Namespace,
+    env: dict[str, str],
+    token: str,
+    allowed_chat_id: str,
+    log_path: Path,
+    task: dict[str, Any],
+    queue_id: str,
+) -> bool:
+    """Pause goal mode, deliver one queued update, then resume the goal.
+
+    Goal-mode agents rarely expose an idle instant that the ordinary queue
+    drain can catch, so a queued message would otherwise starve forever.
+    Interrupting with Escape, delivering while the pane is input-ready, and
+    pasting /goal resume afterwards is the only delivery path that reliably
+    reaches the session. Bounded by RELAY_QUEUE_GOAL_PAUSE_MAX_ATTEMPTS.
+    """
+    attempts = int(task.get("attempts") or 0)
+    if attempts >= RELAY_QUEUE_GOAL_PAUSE_MAX_ATTEMPTS:
+        append_jsonl(
+            log_path,
+            {
+                "ts": int(time.time()),
+                "event": "telegram_relay_queue_goal_delivery_abandoned",
+                "message_id": task.get("message_id"),
+                "queue_id": queue_id,
+            },
+        )
+        return False
+    update = task.get("update")
+    if not isinstance(update, dict):
+        return False
+    resumed = False
+    delivered = False
+    try:
+        tmux_send_keys(args.target_pane, "Escape")
+        try:
+            wait_for_tmux_text(args.target_pane, "Goal paused", timeout=20)
+        except RuntimeError:
+            wait_for_tmux_text(args.target_pane, "Goal paused", timeout=20)
+        record = handle_update(
+            update, args, env, token, allowed_chat_id, log_path
+        )
+        relay_result = (
+            record.get("relay_result") if isinstance(record, dict) else None
+        )
+        delivered = isinstance(relay_result, str) and relay_result.startswith(
+            "relayed to "
+        )
+    finally:
+        try:
+            tmux_paste_text_atomic(args.target_pane, "/goal resume")
+            tmux_send_keys(args.target_pane, "Enter")
+            resumed = True
+        except Exception as exc:
+            append_jsonl(
+                log_path,
+                {
+                    "ts": int(time.time()),
+                    "event": "telegram_relay_queue_goal_resume_failed",
+                    "message_id": task.get("message_id"),
+                    "error": short_error(exc, env),
+                },
+            )
+    return delivered
+
+
 def drain_telegram_relay_queue(
     args: argparse.Namespace,
     env: dict[str, str],
@@ -5680,6 +5749,23 @@ def drain_telegram_relay_queue(
         return []
     checkpoint = codex_session_checkpoint(args.target_pane)
     if checkpoint is not None and codex_session_turn_active(checkpoint[0]):
+        task_age = time.time() - float(task.get("queued_ts") or time.time())
+        if task_age < RELAY_QUEUE_GOAL_PAUSE_GRACE_SECONDS:
+            return []
+        if _deliver_queued_task_via_goal_pause(
+            args, env, token, allowed_chat_id, log_path, task, queue_id
+        ):
+            remove_telegram_relay_queue_task(queue_path, queue_id)
+            append_jsonl(
+                log_path,
+                {
+                    "ts": int(time.time()),
+                    "event": "telegram_relay_queue_goal_delivered",
+                    "message_id": task.get("message_id"),
+                    "queue_id": queue_id,
+                    "target_pane": args.target_pane,
+                },
+            )
         return []
 
     message_id = task.get("message_id")
