@@ -3689,6 +3689,44 @@ def codex_session_context_snapshot(
     }
 
 
+def latest_agent_message_text(session_path: str, max_chars: int = 280) -> str:
+    """Return the newest assistant text from a rollout for /status."""
+    try:
+        size = Path(session_path).stat().st_size
+    except OSError:
+        return "(none)"
+    read_from = max(0, size - 512 * 1024)
+    last_text = ""
+    try:
+        with Path(session_path).open("rb") as handle:
+            handle.seek(read_from)
+            for raw_line in handle:
+                try:
+                    record = json.loads(raw_line.decode("utf-8", "replace"))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                payload = record.get("payload")
+                if not isinstance(payload, dict):
+                    continue
+                if payload.get("type") == "message" and payload.get("role") == "assistant":
+                    content = payload.get("content")
+                    if not isinstance(content, list):
+                        continue
+                    text = " ".join(
+                        str(part.get("text") or "").strip()
+                        for part in content
+                        if isinstance(part, dict) and part.get("type") in {"Text", "text"}
+                    ).strip()
+                    if text:
+                        last_text = text
+    except OSError:
+        pass
+    if not last_text:
+        return "(none)"
+    flat = " ".join(last_text.split())
+    return flat[: max(1, max_chars - 1)].rstrip() + ("…" if len(flat) > max_chars else "")
+
+
 def format_system_status(
     session: str,
     target_pane: str,
@@ -3748,6 +3786,11 @@ def format_system_status(
     ]
     if session_path:
         lines.append(f"session: {session_path}")
+        live_path, _live_method = agent_registry.codex_newest_session_for_pane(
+            target_pane
+        )
+        if live_path is not None and str(live_path) != session_path:
+            session_path = str(live_path)
         context_snapshot = codex_session_context_snapshot(session_path)
         if context_snapshot:
             context_tokens = context_snapshot.get("context_tokens")
@@ -3770,6 +3813,8 @@ def format_system_status(
         else:
             lines.append("context: (unknown)")
             lines.append("compactions: (unknown)")
+        latest = latest_agent_message_text(session_path)
+        lines.append(f"latest: {latest}")
     return "\n".join(lines)
 
 
