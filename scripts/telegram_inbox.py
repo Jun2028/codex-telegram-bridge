@@ -60,20 +60,28 @@ LEGACY_REPLY_PREFIX_RE = re.compile(r"^(?:ACK|PROGRESS|FINAL):\s*", re.IGNORECAS
 TELEGRAM_USER_MESSAGE_MARKER_RE = re.compile(
     r"\[TELEGRAM USER MESSAGE message_id=(\d+)\b"
 )
-DEFAULT_CODEX_AGENT_MODEL = os.environ.get("TELEAGENT_CODEX_MODEL", "gpt-5.6-sol")
-DEFAULT_CODEX_AGENT_REASONING_EFFORT = os.environ.get("TELEAGENT_CODEX_REASONING_EFFORT", "high")
+LATEST_OPENAI_CODEX_AGENT_MODEL = "gpt-5.6-sol"
+LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT = "high"
+DEFAULT_CODEX_AGENT_MODEL = os.environ.get(
+    "TELEAGENT_CODEX_MODEL", LATEST_OPENAI_CODEX_AGENT_MODEL
+)
+DEFAULT_CODEX_AGENT_REASONING_EFFORT = os.environ.get(
+    "TELEAGENT_CODEX_REASONING_EFFORT",
+    LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT,
+)
 SPARK_CODEX_AGENT_MODEL = "gpt-5.3-codex-spark"
 DEEPSEEK_FLASH_CODEX_AGENT_MODEL = "deepseek-v4-flash"
 DEEPSEEK_PRO_CODEX_AGENT_MODEL = "deepseek-v4-pro"
 SUPPORTED_CODEX_AGENT_MODELS = {
     DEFAULT_CODEX_AGENT_MODEL,
+    LATEST_OPENAI_CODEX_AGENT_MODEL,
     SPARK_CODEX_AGENT_MODEL,
     DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
     DEEPSEEK_PRO_CODEX_AGENT_MODEL,
 }
 CODEX_AGENT_MODEL_ALIASES = {
     "default": DEFAULT_CODEX_AGENT_MODEL,
-    "latest": DEFAULT_CODEX_AGENT_MODEL,
+    "latest": LATEST_OPENAI_CODEX_AGENT_MODEL,
     "sol": DEFAULT_CODEX_AGENT_MODEL,
     "spark": SPARK_CODEX_AGENT_MODEL,
     "ds-flash": DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
@@ -4685,6 +4693,8 @@ def parse_agent_launch_payload(payload: str) -> tuple[str, str, bool]:
                     "unknown reasoning level; use none, minimal, low, medium, "
                     "high, xhigh, max, or ultra"
                 )
+        elif first == "latest":
+            reasoning_effort = LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT
     if (
         model in {DEEPSEEK_FLASH_CODEX_AGENT_MODEL, DEEPSEEK_PRO_CODEX_AGENT_MODEL}
         and not reasoning_explicit
@@ -5096,8 +5106,11 @@ def handle_update(
             "/model latest|spark|ds-flash|ds-pro [LEVEL] — switch model; preserve the current chat\n"
             "/reasoning LEVEL — change the running chat without restarting\n"
             "/agent_status — agent, authentication, and live Codex usage\n\n"
-            "Lifecycle commands never accept prompts. MODEL defaults to latest "
-            "(gpt-5.6-sol); spark selects gpt-5.3-codex-spark only when explicit. "
+            "Lifecycle commands never accept prompts. With MODEL omitted, the "
+            "configured default is used. Explicit latest always selects "
+            f"{LATEST_OPENAI_CODEX_AGENT_MODEL} with "
+            f"reasoning={LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT}; spark "
+            "selects gpt-5.3-codex-spark only when explicit. "
             "ds-flash/ds-pro select deepseek-v4-flash / deepseek-v4-pro and "
             "relaunch the agent under the DeepSeek harness (max reasoning "
             "only). If /model ds-flash or ds-pro fails on an OpenAI pane, run "

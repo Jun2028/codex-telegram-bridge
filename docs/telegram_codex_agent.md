@@ -173,8 +173,10 @@ Without `config/relay.env`, the direct launcher uses `gpt-5.6-sol` with
 `--no-alt-screen`, stable `fast_mode`, `--sandbox danger-full-access`, and
 `--ask-for-approval never`. The model and effort can be overridden with
 `TELEAGENT_CODEX_MODEL` and
-`TELEAGENT_CODEX_REASONING_EFFORT`. The default remains the latest configured
-model; selecting Spark is always an explicit operator action.
+`TELEAGENT_CODEX_REASONING_EFFORT`. When a lifecycle command omits `MODEL`, it
+uses that configured default. Explicit `latest` always selects
+`gpt-5.6-sol` with `high` reasoning, regardless of the configured default;
+selecting Spark is also an explicit operator action.
 
 ## Crash Recovery
 
@@ -310,8 +312,9 @@ Agent lifecycle and model commands have non-overlapping meanings:
   with a fresh chat; the previous conversation context is not preserved. When
   stopped, it refuses and directs the operator to `/start_agent`.
 - `/model latest|spark|ds-flash [LEVEL]` changes the model in the running chat
-  without restarting it. `latest` resolves to the configured default
-  (`gpt-5.6-sol`); `spark` resolves to `gpt-5.3-codex-spark`, whose Codex usage
+  without restarting it. `latest` always resolves to `gpt-5.6-sol`,
+  independent of the configured default; `spark` resolves to
+  `gpt-5.3-codex-spark`, whose Codex usage
   window is reported separately by `/codex_usage` and `/agent_status`; `ds-flash`
   resolves to `deepseek-v4-flash` for a DeepSeek-backed pane (for example the
   managed agent after `/restart_agent ds-flash`) and supports only `max`
@@ -324,10 +327,12 @@ Start and restart use the configured Telegram model when `MODEL` is omitted.
 The bootstrap configures `deepseek-v4-flash`; a manual installation with no
 override uses `gpt-5.6-sol`. A one-token legacy effort such as
 `/restart_agent max` still applies to that default model. Explicit model forms
-include `/restart_agent spark`, `/restart_agent spark xhigh`, and
-`/restart_agent ds-flash`. Spark supports `low`, `medium`, `high`, and `xhigh`;
-the latest model also supports `none`, `minimal`, `max`, and `ultra` where
-appropriate. `ds-flash` relaunches the managed agent with a DeepSeek Codex home
+include `/restart_agent latest`, `/restart_agent spark`, `/restart_agent spark
+xhigh`, and `/restart_agent ds-flash`. Explicit `latest` always selects
+`gpt-5.6-sol` with `high` reasoning unless `LEVEL` is supplied. Spark supports
+`low`, `medium`, `high`, and `xhigh`; the latest model also supports `none`,
+`minimal`, `max`, and `ultra` where appropriate. `ds-flash` relaunches the
+managed agent with a DeepSeek Codex home
 (provider and catalog bundled under `config/deepseek/`, key supplied through
 `TELEAGENT_DS_KEY_FILE`) and is fixed to `max` reasoning. Lifecycle commands
 never accept or infer an initial prompt. Send the task later as an ordinary
