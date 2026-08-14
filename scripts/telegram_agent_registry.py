@@ -288,24 +288,50 @@ def ps_rows() -> list[tuple[int, int, str]]:
     return rows
 
 
-def descendants(root_pid: int) -> list[int]:
-    rows = ps_rows()
+def descendants_with_depth(
+    root_pid: int,
+    rows: list[tuple[int, int, str]] | None = None,
+) -> list[tuple[int, int]]:
+    if rows is None:
+        rows = ps_rows()
     children: dict[int, list[tuple[int, str]]] = {}
-    comm_by_pid: dict[int, str] = {}
     for pid, ppid, comm in rows:
         children.setdefault(ppid, []).append((pid, comm))
-        comm_by_pid[pid] = comm
-    result: list[int] = []
-    stack = [root_pid]
+    result: list[tuple[int, int]] = []
+    stack = [(root_pid, 0)]
     seen: set[int] = set()
     while stack:
-        pid = stack.pop()
+        pid, depth = stack.pop()
         if pid in seen:
             continue
         seen.add(pid)
-        result.append(pid)
-        stack.extend(child_pid for child_pid, _ in children.get(pid, []))
+        result.append((pid, depth))
+        stack.extend(
+            (child_pid, depth + 1) for child_pid, _ in children.get(pid, [])
+        )
     return result
+
+
+def descendants(root_pid: int) -> list[int]:
+    return [pid for pid, _ in descendants_with_depth(root_pid)]
+
+
+def closest_codex_pids(
+    root_pid: int,
+    rows: list[tuple[int, int, str]] | None = None,
+) -> list[int]:
+    if rows is None:
+        rows = ps_rows()
+    comm_by_pid = {pid: comm for pid, _, comm in rows}
+    candidates = [
+        (pid, depth)
+        for pid, depth in descendants_with_depth(root_pid, rows)
+        if comm_by_pid.get(pid) == "codex"
+    ]
+    if not candidates:
+        return []
+    closest_depth = min(depth for _, depth in candidates)
+    return [pid for pid, depth in candidates if depth == closest_depth]
 
 
 def tmux_pane_pid(target_pane: str) -> int | None:
@@ -336,20 +362,66 @@ def session_files_open_by_pid(pid: int) -> list[Path]:
     return matches
 
 
-def codex_session_for_pane(target_pane: str) -> tuple[Path | None, str]:
+def codex_session_for_pane(
+    target_pane: str,
+    preferred_session_path: str | Path | None = None,
+) -> tuple[Path | None, str]:
     root_pid = tmux_pane_pid(target_pane)
     if root_pid is None:
         return None, "tmux_pane_pid_unavailable"
-    rows = {pid: comm for pid, _, comm in ps_rows()}
+    rows = ps_rows()
     candidates: list[Path] = []
-    for pid in descendants(root_pid):
-        comm = rows.get(pid, "")
-        if comm != "codex" and pid != root_pid:
-            continue
+    # A running Codex may launch short-lived helper Codex processes. Those
+    # helpers have their own rollout files, but they do not replace the agent
+    # attached to this pane. Only inspect the nearest Codex process layer.
+    for pid in closest_codex_pids(root_pid, rows):
         candidates.extend(session_files_open_by_pid(pid))
     if candidates:
-        return max(candidates, key=lambda path: path.stat().st_mtime), "process_fd"
+        if preferred_session_path:
+            try:
+                preferred = Path(preferred_session_path).resolve()
+                for candidate in candidates:
+                    if candidate.resolve() == preferred:
+                        return candidate, "process_fd"
+            except OSError:
+                pass
+        # With no established link, the pane's root rollout is the earliest
+        # session held by the main Codex process. Later sessions belong to
+        # helper/sub-agent work and must not become the Telegram source.
+        def session_start_key(path: Path) -> tuple[float, float]:
+            started = iso_timestamp_epoch(codex_session_metadata(path).get("timestamp"))
+            return (
+                started if started is not None else float("inf"),
+                path.stat().st_mtime,
+            )
+
+        return min(candidates, key=session_start_key), "process_fd"
     return None, "process_fd_not_found"
+
+
+def codex_newest_session_for_pane(
+    target_pane: str,
+) -> tuple[Path | None, str]:
+    """Return the most recently written rollout held open by the pane's Codex.
+
+    A goal-mode agent may resume an older thread while its registry link still
+    names a newer helper rollout. The newest-written open rollout is where its
+    current replies actually land, so relay drains should prefer it over a
+    stale linked path.
+    """
+    root_pid = tmux_pane_pid(target_pane)
+    if root_pid is None:
+        return None, "tmux_pane_pid_unavailable"
+    candidates: list[Path] = []
+    for pid in closest_codex_pids(root_pid, ps_rows()):
+        candidates.extend(session_files_open_by_pid(pid))
+    if not candidates:
+        return None, "process_fd_not_found"
+    try:
+        newest = max(candidates, key=lambda path: path.stat().st_mtime)
+    except OSError:
+        return None, "process_fd_stat_failed"
+    return newest, "process_fd_newest"
 
 
 def codex_homes_for_pane(target_pane: str) -> list[Path]:
@@ -357,12 +429,9 @@ def codex_homes_for_pane(target_pane: str) -> list[Path]:
     root_pid = tmux_pane_pid(target_pane)
     if root_pid is None:
         return []
-    rows = {pid: comm for pid, _, comm in ps_rows()}
+    rows = ps_rows()
     homes: list[Path] = []
-    for pid in descendants(root_pid):
-        comm = rows.get(pid, "")
-        if comm != "codex" and pid != root_pid:
-            continue
+    for pid in closest_codex_pids(root_pid, rows):
         try:
             environ = Path(f"/proc/{pid}/environ").read_bytes()
         except OSError:
@@ -442,10 +511,24 @@ def refresh_codex_session_link(
     start_epoch: float | None = None,
 ) -> dict[str, Any]:
     target = target_pane or str(meta.get("target_pane") or "")
-    session_path, method = codex_session_for_pane(target) if target else (None, "no_target_pane")
+    current_path_text = str(meta.get("codex_session_path") or "")
+    session_path, method = (
+        codex_session_for_pane(target, preferred_session_path=current_path_text)
+        if target
+        else (None, "no_target_pane")
+    )
     if session_path is not None and not codex_session_matches_agent(meta, session_path):
         session_path = None
         method = f"{method}_rejected"
+    current_path_valid = bool(
+        current_path_text
+        and codex_session_matches_agent(meta, Path(current_path_text))
+    )
+    # The mtime fallback exists only to discover a new agent's first rollout.
+    # Once a valid rollout is linked, a temporary loss of its process FD must
+    # not let an unrelated newer helper rollout replace it.
+    if session_path is None and current_path_valid:
+        return meta
     # A newly launched process may create its session only after the first
     # prompt, and the process-FD window can be brief. Its registry timestamp is
     # safe for later discovery because recent_codex_session validates the
@@ -463,8 +546,7 @@ def refresh_codex_session_link(
             extra_homes=codex_homes_for_pane(target),
         )
     if session_path is None:
-        current_path_text = str(meta.get("codex_session_path") or "")
-        if current_path_text and not codex_session_matches_agent(meta, Path(current_path_text)):
+        if current_path_text and not current_path_valid:
             return clear_codex_session_link(meta, method)
         return meta
 

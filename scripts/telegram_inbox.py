@@ -6169,6 +6169,21 @@ def main() -> int:
         if not meta:
             return
         meta = agent_registry.refresh_codex_session_link(meta, target_pane=args.target_pane)
+        live_path, _method = agent_registry.codex_newest_session_for_pane(
+            args.target_pane
+        )
+        if live_path is not None:
+            linked_text = meta.get("codex_session_path")
+            try:
+                linked_mtime = (
+                    Path(linked_text).stat().st_mtime
+                    if linked_text
+                    else float("-inf")
+                )
+            except OSError:
+                linked_mtime = float("-inf")
+            if live_path.stat().st_mtime > linked_mtime:
+                meta["codex_session_path"] = str(live_path)
         drain_codex_agent_messages(
             token,
             chat_id,
