@@ -5622,6 +5622,54 @@ def dispatch_telegram_update(
 
 RELAY_QUEUE_GOAL_PAUSE_GRACE_SECONDS = 60
 RELAY_QUEUE_GOAL_PAUSE_MAX_ATTEMPTS = 3
+RELAY_PENDING_WEDGE_SECONDS = 600
+
+
+def _fail_stale_pending_codex_submissions(
+    state_path: Path,
+    target_pane: str,
+    *,
+    reason: str,
+    older_than: float,
+) -> int:
+    """Move blockers that can no longer merge with composer input to failed."""
+    state = read_json_object(state_path)
+    raw_pending = state.get("pending")
+    if not isinstance(raw_pending, list):
+        return 0
+    now = time.time()
+    kept: list[dict[str, Any]] = []
+    failed: list[dict[str, Any]] = state.get("failed")
+    if not isinstance(failed, list):
+        failed = []
+    moved = 0
+    for raw_item in raw_pending:
+        if not isinstance(raw_item, dict):
+            continue
+        if raw_item.get("target_pane") != target_pane:
+            kept.append(raw_item)
+            continue
+        try:
+            created_ts = float(raw_item.get("created_ts") or now)
+        except (TypeError, ValueError):
+            created_ts = now
+        if now - created_ts < older_than:
+            kept.append(raw_item)
+            continue
+        item = dict(raw_item)
+        item["stalled_reason"] = reason
+        item["stalled_ts"] = now
+        failed.append(item)
+        moved += 1
+    state.update(
+        {
+            "pending": kept,
+            "failed": failed,
+            "updated_ts": int(now),
+        }
+    )
+    write_json_object(state_path, state)
+    return moved
 
 
 def _deliver_queued_task_via_goal_pause(
@@ -5743,10 +5791,36 @@ def drain_telegram_relay_queue(
         return [event]
 
     confirmation_text = getattr(args, "relay_confirmation_state_path", None)
-    if confirmation_text and current_pending_codex_submissions(
-        Path(confirmation_text), args.target_pane
-    ):
-        return []
+    if confirmation_text:
+        confirmation_path = Path(confirmation_text)
+        blockers = current_pending_codex_submissions(
+            confirmation_path, args.target_pane
+        )
+        if blockers:
+            # A pending relay whose marker will never be confirmed must not
+            # wedge the queue forever. After the grace window, retire it to
+            # failed instead of failing closed for everything behind it.
+            moved = _fail_stale_pending_codex_submissions(
+                confirmation_path,
+                args.target_pane,
+                reason="stale_pending_cleared",
+                older_than=RELAY_PENDING_WEDGE_SECONDS,
+            )
+            if moved:
+                append_jsonl(
+                    log_path,
+                    {
+                        "ts": int(time.time()),
+                        "event": "telegram_relay_stale_pending_cleared",
+                        "cleared": moved,
+                        "target_pane": args.target_pane,
+                    },
+                )
+                blockers = current_pending_codex_submissions(
+                    confirmation_path, args.target_pane
+                )
+        if blockers:
+            return []
     checkpoint = codex_session_checkpoint(args.target_pane)
     if checkpoint is not None and codex_session_turn_active(checkpoint[0]):
         task_age = time.time() - float(task.get("queued_ts") or time.time())
