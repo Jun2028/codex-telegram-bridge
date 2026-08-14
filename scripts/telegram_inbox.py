@@ -3697,6 +3697,7 @@ def latest_agent_message_text(session_path: str, max_chars: int = 280) -> str:
         return "(none)"
     read_from = max(0, size - 512 * 1024)
     last_text = ""
+    last_timestamp: str | None = None
     try:
         with Path(session_path).open("rb") as handle:
             handle.seek(read_from)
@@ -3730,12 +3731,25 @@ def latest_agent_message_text(session_path: str, max_chars: int = 280) -> str:
                     ).strip()
                     if text:
                         last_text = text
+                        last_timestamp = record.get("timestamp")
     except OSError:
         pass
     if not last_text:
         return "(none)"
     flat = " ".join(last_text.split())
-    return flat[: max(1, max_chars - 1)].rstrip() + ("…" if len(flat) > max_chars else "")
+    stamp = ""
+    if isinstance(last_timestamp, str):
+        try:
+            parsed = datetime.fromisoformat(
+                last_timestamp.replace("Z", "+00:00")
+            ).astimezone(SGT)
+            stamp = parsed.strftime("%H:%M:%S") + " "
+        except ValueError:
+            stamp = ""
+    snippet = flat[: max(1, max_chars - 1)].rstrip() + (
+        "…" if len(flat) > max_chars else ""
+    )
+    return f"{stamp}{snippet}"
 
 
 def format_system_status(
