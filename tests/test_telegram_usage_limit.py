@@ -282,6 +282,24 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(model, "deepseek-v4-flash")
         self.assertEqual(reasoning, "max")
 
+    def test_parse_live_model_payload_keeps_latest_openai_only(self) -> None:
+        with (
+            mock.patch.object(
+                telegram_inbox,
+                "DEFAULT_CODEX_AGENT_MODEL",
+                "deepseek-v4-pro",
+            ),
+            mock.patch.object(
+                telegram_inbox,
+                "DEFAULT_CODEX_AGENT_REASONING_EFFORT",
+                "max",
+            ),
+        ):
+            model, reasoning = telegram_inbox.parse_live_model_payload("latest")
+
+        self.assertEqual(model, telegram_inbox.LATEST_OPENAI_CODEX_AGENT_MODEL)
+        self.assertIsNone(reasoning)
+
     def test_parse_live_model_payload_accepts_full_deepseek_flash(self) -> None:
         model, reasoning = telegram_inbox.parse_live_model_payload(
             "deepseek-v4-flash max"
@@ -331,11 +349,28 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         self.assertEqual(current, ("deepseek-v4-flash", "max"))
 
-    def test_parse_agent_launch_payload_keeps_latest_as_default(self) -> None:
-        model, reasoning, explicit = telegram_inbox.parse_agent_launch_payload("latest")
+    def test_parse_agent_launch_payload_keeps_latest_openai_only(self) -> None:
+        with (
+            mock.patch.object(
+                telegram_inbox,
+                "DEFAULT_CODEX_AGENT_MODEL",
+                "deepseek-v4-pro",
+            ),
+            mock.patch.object(
+                telegram_inbox,
+                "DEFAULT_CODEX_AGENT_REASONING_EFFORT",
+                "max",
+            ),
+        ):
+            model, reasoning, explicit = telegram_inbox.parse_agent_launch_payload(
+                "latest"
+            )
 
-        self.assertEqual(model, telegram_inbox.DEFAULT_CODEX_AGENT_MODEL)
-        self.assertEqual(reasoning, telegram_inbox.DEFAULT_CODEX_AGENT_REASONING_EFFORT)
+        self.assertEqual(model, telegram_inbox.LATEST_OPENAI_CODEX_AGENT_MODEL)
+        self.assertEqual(
+            reasoning,
+            telegram_inbox.LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT,
+        )
         self.assertTrue(explicit)
 
     def test_parse_agent_launch_payload_rejects_unsupported_spark_effort(self) -> None:
@@ -516,7 +551,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
             help_text,
         )
         self.assertIn("/model latest|spark|ds-flash|ds-pro [LEVEL]", help_text)
-        self.assertIn("MODEL defaults to latest (gpt-5.6-sol)", help_text)
+        self.assertIn("With MODEL omitted, the configured default is used", help_text)
+        self.assertIn(
+            "Explicit latest always selects gpt-5.6-sol with reasoning=high",
+            help_text,
+        )
         self.assertIn("ds-flash/ds-pro select deepseek-v4-flash / deepseek-v4-pro", help_text)
         self.assertIn("restart_agent ds-flash", help_text)
         self.assertIn("never accept prompts", help_text)
@@ -569,6 +608,72 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(call["reasoning_effort"], "max")
         self.assertNotIn("prompt", call)
         self.assertIn("reasoning=max", send_reply.call_args_list[0].args[2])
+
+    def test_restart_agent_latest_ignores_deepseek_deployment_default(self) -> None:
+        args = argparse.Namespace(
+            codex_usage_state_path=str(self.state),
+            codex_reset_state_path=str(self.root / "reset.state.json"),
+            repo_root=self.repo,
+            session="tele-agent",
+            codex_window="codex",
+            max_log_chars=4000,
+            target_pane="tele-agent:codex.0",
+        )
+        update = {
+            "update_id": 29,
+            "message": {
+                "message_id": 30,
+                "date": 1_900_000_000,
+                "chat": {"id": "123"},
+                "from": {"id": 456, "username": "tester"},
+                "text": "/restart_agent latest",
+            },
+        }
+        with (
+            mock.patch.object(
+                telegram_inbox,
+                "DEFAULT_CODEX_AGENT_MODEL",
+                "deepseek-v4-pro",
+            ),
+            mock.patch.object(
+                telegram_inbox,
+                "DEFAULT_CODEX_AGENT_REASONING_EFFORT",
+                "max",
+            ),
+            mock.patch.object(
+                telegram_inbox,
+                "start_codex_agent",
+                return_value=(
+                    "tele-agent:codex.0",
+                    "Started Codex in tele-agent:codex.0.",
+                    {"agent_id": "latest-agent"},
+                ),
+            ) as start_agent,
+            mock.patch.object(
+                telegram_inbox,
+                "managed_codex_agent_present",
+                return_value=True,
+            ),
+            mock.patch.object(telegram_inbox, "send_reply"),
+        ):
+            telegram_inbox.handle_update(
+                update,
+                args,
+                {},
+                "token",
+                "123",
+                self.root / "latest-restart.jsonl",
+            )
+
+        call = start_agent.call_args.kwargs
+        self.assertTrue(call["restart"])
+        self.assertEqual(
+            call["model"], telegram_inbox.LATEST_OPENAI_CODEX_AGENT_MODEL
+        )
+        self.assertEqual(
+            call["reasoning_effort"],
+            telegram_inbox.LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT,
+        )
 
     def test_restart_agent_accepts_explicit_spark_without_changing_default(self) -> None:
         args = argparse.Namespace(
