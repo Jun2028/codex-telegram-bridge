@@ -3708,14 +3708,25 @@ def latest_agent_message_text(session_path: str, max_chars: int = 280) -> str:
                 payload = record.get("payload")
                 if not isinstance(payload, dict):
                     continue
-                if payload.get("type") == "message" and payload.get("role") == "assistant":
+                content = None
+                if (
+                    record.get("type") == "event_msg"
+                    and payload.get("type") == "item_completed"
+                ):
+                    item = payload.get("item")
+                    if isinstance(item, dict) and item.get("type") == "AgentMessage":
+                        content = item.get("content")
+                if payload.get("type") == "message" and payload.get("role") in (
+                    None,
+                    "assistant",
+                ):
                     content = payload.get("content")
-                    if not isinstance(content, list):
-                        continue
+                if isinstance(content, list):
                     text = " ".join(
                         str(part.get("text") or "").strip()
                         for part in content
-                        if isinstance(part, dict) and part.get("type") in {"Text", "text"}
+                        if isinstance(part, dict)
+                        and str(part.get("text") or "").strip()
                     ).strip()
                     if text:
                         last_text = text
