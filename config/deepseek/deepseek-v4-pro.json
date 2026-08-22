@@ -1,0 +1,7 @@
+{
+  "model": "deepseek-v4-pro",
+  "provider": "deepseek",
+  "reasoningEffort": "max",
+  "schemaVersion": 1,
+  "serviceTier": null
+}

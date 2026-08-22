@@ -1,0 +1,13 @@
+.secrets/
+config/relay.env
+config/relay-*.env
+config/personality.md
+config/personality-*.md
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+logs/
+artifacts/
+*.log
+*.bak*
