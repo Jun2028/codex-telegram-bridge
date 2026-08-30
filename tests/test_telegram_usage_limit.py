@@ -474,7 +474,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 26,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456},
                 "text": "/status",
             },
@@ -565,7 +565,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 28,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456},
                 "text": "/help",
             },
@@ -611,7 +611,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 31,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/restart_agent max",
             },
@@ -659,7 +659,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 30,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/restart_agent latest",
             },
@@ -725,7 +725,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 32,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/restart_agent spark",
             },
@@ -779,7 +779,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 33,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/restart_agent ds-flash",
             },
@@ -832,7 +832,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 33,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456},
                 "text": "/kill_agent",
             },
@@ -902,7 +902,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 35,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456},
                 "text": "/restart_agent max",
             },
@@ -942,7 +942,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 37,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456},
                 "text": "/start_agent",
             },
@@ -1127,7 +1127,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 40,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/model spark",
             },
@@ -1184,7 +1184,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 41,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/reasoning high",
             },
@@ -1619,7 +1619,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 2,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "are you there?",
             },
@@ -1681,7 +1681,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 11,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/codex_reset",
             },
@@ -1739,7 +1739,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 11,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/codex_reset",
             },
@@ -1848,7 +1848,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 13,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/codex_usage",
             },
@@ -2012,7 +2012,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 41,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/start_agent",
             },
@@ -2081,7 +2081,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 21,
                 "date": now,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/Confirm",
             },
@@ -2147,7 +2147,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 23,
                 "date": now,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456},
                 "text": "/Confirm",
             },

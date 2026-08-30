@@ -190,7 +190,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             "message": {
                 "message_id": 41,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "are you there?",
             },
@@ -233,7 +233,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             "message": {
                 "message_id": 43,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456},
                 "text": "/agent_status",
             },
@@ -263,7 +263,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             "message": {
                 "message_id": 45,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456},
                 "text": "/reauth",
             },

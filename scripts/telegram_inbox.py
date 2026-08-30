@@ -98,22 +98,29 @@ LEGACY_REPLY_PREFIX_RE = re.compile(r"^(?:ACK|PROGRESS|FINAL):\s*", re.IGNORECAS
 TELEGRAM_USER_MESSAGE_MARKER_RE = re.compile(
     r"\[TELEGRAM USER MESSAGE message_id=(\d+)\b"
 )
-DEFAULT_CODEX_AGENT_MODEL = os.environ.get("TELEAGENT_CODEX_MODEL", "gpt-5.6-sol")
-DEFAULT_CODEX_AGENT_REASONING_EFFORT = os.environ.get("TELEAGENT_CODEX_REASONING_EFFORT", "high")
+LATEST_OPENAI_CODEX_AGENT_MODEL = "gpt-5.6-sol"
+LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT = "high"
+DEFAULT_CODEX_AGENT_MODEL = os.environ.get(
+    "TELEAGENT_CODEX_MODEL", LATEST_OPENAI_CODEX_AGENT_MODEL
+)
+DEFAULT_CODEX_AGENT_REASONING_EFFORT = os.environ.get(
+    "TELEAGENT_CODEX_REASONING_EFFORT",
+    LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT,
+)
 SPARK_CODEX_AGENT_MODEL = "gpt-5.3-codex-spark"
 DEEPSEEK_FLASH_CODEX_AGENT_MODEL = "deepseek-v4-flash"
 DEEPSEEK_PRO_CODEX_AGENT_MODEL = "deepseek-v4-pro"
 SUPPORTED_CODEX_AGENT_MODELS = {
-    "gpt-5.6-sol",
+    LATEST_OPENAI_CODEX_AGENT_MODEL,
     DEFAULT_CODEX_AGENT_MODEL,
     SPARK_CODEX_AGENT_MODEL,
     DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
     DEEPSEEK_PRO_CODEX_AGENT_MODEL,
 }
 CODEX_AGENT_MODEL_ALIASES = {
-    "default": "gpt-5.6-sol",
-    "latest": "gpt-5.6-sol",
-    "sol": "gpt-5.6-sol",
+    "default": DEFAULT_CODEX_AGENT_MODEL,
+    "latest": LATEST_OPENAI_CODEX_AGENT_MODEL,
+    "sol": LATEST_OPENAI_CODEX_AGENT_MODEL,
     "spark": SPARK_CODEX_AGENT_MODEL,
     "ds-flash": DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
     "ds-pro": DEEPSEEK_PRO_CODEX_AGENT_MODEL,
@@ -1006,22 +1013,25 @@ def valid_codex_session_for_agent(
 ) -> bool:
     try:
         resolved_session = session_path.resolve()
-        resolved_sessions_root = (sessions_root or (Path.home() / ".codex" / "sessions")).resolve()
         if not resolved_session.is_file():
             return False
-        if not resolved_session.is_relative_to(resolved_sessions_root):
-            # DeepSeek-backed agents keep sessions under their own CODEX_HOME
-            # (for example the telegram-ds-codex-home used by ds-flash/ds-pro), so
-            # accept sessions discovered under any codex home in the pane.
+        expected_home = agent_registry.codex_home_from_meta(meta)
+        if expected_home is not None:
+            allowed_roots = [(expected_home / "sessions").resolve()]
+        elif sessions_root is not None:
+            allowed_roots = [sessions_root.resolve()]
+        else:
+            allowed_roots = [(Path.home() / ".codex" / "sessions").resolve()]
             target_pane = str(meta.get("target_pane") or "")
-            ds_home_ok = False
             if target_pane:
-                ds_home_ok = any(
-                    resolved_session.is_relative_to((home / "sessions").resolve())
+                allowed_roots.extend(
+                    (home / "sessions").resolve()
                     for home in agent_registry.codex_homes_for_pane(target_pane)
                 )
-            if not ds_home_ok:
-                return False
+        if not any(
+            resolved_session.is_relative_to(root) for root in allowed_roots
+        ):
+            return False
     except OSError:
         return False
 
@@ -2399,6 +2409,32 @@ def codex_executable() -> str:
     raise RuntimeError("codex CLI not found on PATH or ~/.local/bin/codex")
 
 
+def codex_home_for_model(model: str) -> Path:
+    scratch = Path(
+        os.environ.get(
+            "TELEAGENT_SCRATCH",
+            str(Path.home() / ".local" / "share" / "tele-agent"),
+        )
+    )
+    if model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+        return Path(
+            os.environ.get(
+                "TELEAGENT_DS_CODEX_HOME",
+                str(scratch / "tele-agent-ds-codex-home"),
+            )
+        ).expanduser().resolve()
+    return Path(
+        os.environ.get("TELEAGENT_CODEX_HOME", str(Path.home() / ".codex"))
+    ).expanduser().resolve()
+
+
+def tmux_bash_shell_command() -> str:
+    bash_path = shutil.which("bash")
+    if not bash_path:
+        raise RuntimeError("bash is required for managed tele-agent tmux panes")
+    return shlex.join(["exec", bash_path, "--noprofile", "--norc"])
+
+
 def build_codex_agent_command(
     repo_root: Path,
     codex_path: str,
@@ -2407,12 +2443,14 @@ def build_codex_agent_command(
     reasoning_effort: str = DEFAULT_CODEX_AGENT_REASONING_EFFORT,
 ) -> str:
     repo_q = shlex.quote(str(repo_root))
+    instance_q = shlex.quote(os.environ.get("TELEAGENT_INSTANCE", "main"))
     codex_q = shlex.quote(codex_path)
     supervisor_q = shlex.quote(str(repo_root / "scripts" / "codex_agent_supervisor.sh"))
     model_q = shlex.quote(model)
     reasoning_q = shlex.quote(reasoning_effort)
     command = (
-        f"cd {repo_q} && source scripts/relay_paths.sh && "
+        f"cd {repo_q} && export TELEAGENT_INSTANCE={instance_q} && "
+        "source scripts/relay_paths.sh && "
         f"{codex_agent_env} TELEAGENT_CODEX_BIN={codex_q} {supervisor_q} "
         f"--model {model_q} --reasoning-effort {reasoning_q}"
     )
@@ -2429,10 +2467,35 @@ def start_codex_agent(
 ) -> tuple[str, str, dict[str, Any] | None]:
     ensure_tmux_session(repo_root, session)
     target_pane = f"{session}:{window}.0"
+    agent_codex_home = codex_home_for_model(model)
+    shell_command = tmux_bash_shell_command()
+
+    if model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+        prepare_script = repo_root / "scripts" / "prepare_telegram_ds_codex_home.sh"
+    elif os.environ.get("TELEAGENT_INSTANCE", "main") != "main":
+        prepare_script = repo_root / "scripts" / "prepare_telegram_codex_home.sh"
+    else:
+        prepare_script = None
+    if prepare_script is not None:
+        subprocess.run(
+            [str(prepare_script)],
+            check=True,
+            timeout=30,
+        )
 
     if not tmux_window_exists(session, window):
         subprocess.run(
-            ["tmux", "new-window", "-t", session, "-n", window, "-c", str(repo_root)],
+            [
+                "tmux",
+                "new-window",
+                "-t",
+                session,
+                "-n",
+                window,
+                "-c",
+                str(repo_root),
+                shell_command,
+            ],
             check=True,
             timeout=10,
         )
@@ -2440,7 +2503,17 @@ def start_codex_agent(
         if restart:
             subprocess.run(["tmux", "kill-window", "-t", f"{session}:{window}"], check=True, timeout=5)
             subprocess.run(
-                ["tmux", "new-window", "-t", session, "-n", window, "-c", str(repo_root)],
+                [
+                    "tmux",
+                    "new-window",
+                    "-t",
+                    session,
+                    "-n",
+                    window,
+                    "-c",
+                    str(repo_root),
+                    shell_command,
+                ],
                 check=True,
                 timeout=10,
             )
@@ -2453,6 +2526,7 @@ def start_codex_agent(
                     window=window,
                     target_pane=target_pane,
                     launch_source="telegram-start-agent-reuse",
+                    codex_home=agent_codex_home,
                 )
                 agent_registry.append_agent_event(meta, {"event": "agent_reused_by_start_agent"})
                 return target_pane, f"Supervised Codex agent already appears to be running in {target_pane}.", meta
@@ -2470,6 +2544,7 @@ def start_codex_agent(
         target_pane=target_pane,
         launch_source="telegram-restart-agent" if restart else "telegram-start-agent",
         start_epoch=start_epoch,
+        codex_home=agent_codex_home,
     )
     codex_agent_env = agent_registry.shell_env_prefix(meta)
     command = build_codex_agent_command(
@@ -2546,6 +2621,8 @@ def codex_session_checkpoint(target_pane: str) -> tuple[Path, int] | None:
     if not session_text:
         return None
     session_path = Path(session_text)
+    if not valid_codex_session_for_agent(meta, session_path):
+        return None
     try:
         return session_path, session_path.stat().st_size
     except OSError:
@@ -4246,7 +4323,13 @@ def format_system_status(
             except (TypeError, ValueError):
                 anchor_age = float("inf")
             anchored = drain_state.get("session_path")
-            if anchor_age <= 3600 and isinstance(anchored, str) and anchored:
+            if (
+                meta
+                and anchor_age <= 3600
+                and isinstance(anchored, str)
+                and anchored
+                and valid_codex_session_for_agent(meta, Path(anchored))
+            ):
                 session_path = anchored
     current = current_codex_model_and_reasoning_effort(target_pane, session_path)
     model_text = f"{current[0]} / {current[1]}" if current else "(unknown)"
@@ -5144,6 +5227,11 @@ def parse_agent_launch_payload(payload: str) -> tuple[str, str, bool]:
                     "unknown reasoning level; use none, minimal, low, medium, "
                     "high, xhigh, max, or ultra"
                 )
+        elif model in {
+            LATEST_OPENAI_CODEX_AGENT_MODEL,
+            SPARK_CODEX_AGENT_MODEL,
+        }:
+            reasoning_effort = LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT
     if (
         model in {DEEPSEEK_FLASH_CODEX_AGENT_MODEL, DEEPSEEK_PRO_CODEX_AGENT_MODEL}
         and not reasoning_explicit
@@ -5764,8 +5852,11 @@ def handle_update(
             "/model latest|spark|ds-flash|ds-pro [LEVEL] — switch model; preserve the current chat\n"
             "/reasoning LEVEL — change the running chat without restarting\n"
             "/agent_status — agent, authentication, and live Codex usage\n\n"
-            "Lifecycle commands never accept prompts. MODEL defaults to latest "
-            "(gpt-5.6-sol); spark selects gpt-5.3-codex-spark only when explicit. "
+            "Lifecycle commands never accept prompts. With MODEL omitted, the "
+            "configured default is used. Explicit latest always selects "
+            f"{LATEST_OPENAI_CODEX_AGENT_MODEL} with "
+            f"reasoning={LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT}; spark "
+            "selects gpt-5.3-codex-spark only when explicit. "
             "ds-flash/ds-pro select deepseek-v4-flash / deepseek-v4-pro and "
             "relaunch the agent under the DeepSeek harness (max reasoning "
             "only). If /model ds-flash or ds-pro fails on an OpenAI pane, run "
@@ -6611,16 +6702,22 @@ def _anchor_agent_message_drain(
     state_text = getattr(args, "agent_message_state_path", None)
     if not state_text:
         return
+    meta = agent_registry.active_agent_for_pane(args.target_pane)
+    if not meta:
+        return
     marker_path, _marker_method = (
-        agent_registry.codex_session_with_latest_user_message(args.target_pane)
+        agent_registry.codex_session_with_latest_user_message(
+            args.target_pane, codex_home=meta.get("codex_home")
+        )
     )
-    if marker_path is None:
+    if marker_path is None or not valid_codex_session_for_agent(
+        meta, marker_path
+    ):
         return
     try:
         session_size = marker_path.stat().st_size
     except OSError:
         session_size = 0
-    meta = agent_registry.active_agent_for_pane(args.target_pane)
     write_json_object(
         Path(state_text),
         {
@@ -7198,6 +7295,7 @@ def main() -> int:
             anchor_age <= 3600
             and isinstance(anchored_path, str)
             and anchored_path
+            and valid_codex_session_for_agent(meta, Path(anchored_path))
         ):
             meta["codex_session_path"] = anchored_path
         route_chat_id, route_is_group = read_reply_route_state(route_state_path)

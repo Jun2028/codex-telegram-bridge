@@ -33,6 +33,7 @@ DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"
 
 mkdir -p "$DS_CODEX_HOME"
 chmod 700 "$DS_CODEX_HOME"
+tele_agent_claim_codex_home "$DS_CODEX_HOME"
 install -m 600 "$DS_UTILS_ROOT/models.json" "$DS_CODEX_HOME/models.json"
 install -m 600 "$DS_UTILS_ROOT/deepseek-v4-flash.json" \
   "$DS_CODEX_HOME/agent-model.json"

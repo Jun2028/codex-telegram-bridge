@@ -36,20 +36,101 @@ class TelegramAgentRegistryTests(unittest.TestCase):
         self.env.start()
         self.addCleanup(self.env.stop)
 
-    def _session(self, name: str, timestamp: str, cwd: Path | None = None) -> Path:
-        path = self.sessions / name
+    def _session(
+        self,
+        name: str,
+        timestamp: str,
+        cwd: Path | None = None,
+        sessions_dir: Path | None = None,
+        extra_record: dict[str, object] | None = None,
+    ) -> Path:
+        root = sessions_dir or self.sessions
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / name
+        record: dict[str, object] = {
+            "type": "session_meta",
+            "timestamp": timestamp,
+            "payload": {"cwd": str(cwd or self.repo)},
+        }
+        if extra_record:
+            record.update(extra_record)
         path.write_text(
-            json.dumps(
-                {
-                    "type": "session_meta",
-                    "timestamp": timestamp,
-                    "payload": {"cwd": str(cwd or self.repo)},
-                }
-            )
-            + "\n",
+            json.dumps(record) + "\n",
             encoding="utf-8",
         )
         return path
+
+    def test_recorded_codex_home_rejects_matching_session_from_other_home(self) -> None:
+        private_home = self.root / "private-codex"
+        other_session = self._session(
+            "other.jsonl", "2026-07-19T04:00:01Z"
+        )
+        agent_started = registry.iso_timestamp_epoch("2026-07-19T04:00:00Z")
+        assert agent_started is not None
+        meta = {
+            "codex_home": str(private_home),
+            "created_ts": agent_started,
+            "launch_source": "start_codex_agent.sh",
+            "repo_root": str(self.repo),
+        }
+
+        self.assertFalse(
+            registry.codex_session_matches_agent(meta, other_session)
+        )
+
+    def test_explicit_home_fallback_never_scans_default_home(self) -> None:
+        private_home = self.root / "private-codex"
+        private_sessions = private_home / "sessions" / "2026" / "07" / "19"
+        private_session = self._session(
+            "private.jsonl",
+            "2026-07-19T04:00:01Z",
+            sessions_dir=private_sessions,
+        )
+        default_session = self._session(
+            "default.jsonl", "2026-07-19T04:00:02Z"
+        )
+        default_session.touch()
+        agent_started = registry.iso_timestamp_epoch("2026-07-19T04:00:00Z")
+        assert agent_started is not None
+
+        with mock.patch.object(registry.Path, "home", return_value=self.home):
+            found, reason = registry.recent_codex_session(
+                agent_started,
+                repo_root=self.repo,
+                extra_homes=[private_home],
+            )
+
+        self.assertEqual(found, private_session)
+        self.assertEqual(reason, "mtime_fallback")
+
+    def test_user_marker_search_is_confined_to_recorded_home(self) -> None:
+        private_home = self.root / "private-codex"
+        private_sessions = private_home / "sessions" / "2026" / "07" / "19"
+        private_session = self._session(
+            "private.jsonl",
+            "2026-07-19T04:00:01Z",
+            sessions_dir=private_sessions,
+        )
+        private_session.write_text(
+            private_session.read_text(encoding="utf-8")
+            + '[TELEGRAM USER MESSAGE message_id=10]\n',
+            encoding="utf-8",
+        )
+        default_session = self._session(
+            "default-marker.jsonl", "2026-07-19T04:00:02Z"
+        )
+        default_session.write_text(
+            default_session.read_text(encoding="utf-8")
+            + '[TELEGRAM USER MESSAGE message_id=99]\n',
+            encoding="utf-8",
+        )
+
+        found, reason = registry.codex_session_with_latest_user_message(
+            "tele-agent-beta:codex.0", codex_home=private_home
+        )
+
+        self.assertEqual(found, private_session)
+        self.assertEqual(reason, "user_marker")
 
     def test_new_process_rejects_old_session_seen_through_process_fd(self) -> None:
         old_session = self._session("old.jsonl", "2026-07-19T01:00:00Z")
@@ -121,6 +202,7 @@ class TelegramAgentRegistryTests(unittest.TestCase):
         meta = {
             "agent_id": "agent-test",
             "agent_jsonl": str(self.log_dir / "agents" / "agent-test" / "events.jsonl"),
+            "codex_home": str(self.home / ".codex"),
             "codex_session_path": None,
             "created_ts": agent_started,
             "launch_source": "start_codex_agent.sh",

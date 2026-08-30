@@ -27,6 +27,19 @@ window recreates the managed agent and listener:
 */1 * * * * <abs-path>/scripts/ensure_telegram_relay.sh >/dev/null 2>&1 # tele-agent-relay
 ```
 
+Install a separate watchdog for every non-main instance, with the instance set
+explicitly. `bootstrap_new_machine.sh` does this automatically for the instance
+being bootstrapped:
+
+```cron
+@reboot TELEAGENT_INSTANCE=beta <abs-path>/scripts/ensure_telegram_relay.sh >/dev/null 2>&1 # tele-agent-relay:beta
+*/1 * * * * TELEAGENT_INSTANCE=beta <abs-path>/scripts/ensure_telegram_relay.sh >/dev/null 2>&1 # tele-agent-relay:beta
+```
+
+Managed windows explicitly run Bash. They do not inherit tmux's global
+`default-shell`, which may be `/bin/sh` when an unrelated cron job creates the
+shared tmux server first.
+
 ## Multiple Instances
 
 The stack is instance-aware through `TELEAGENT_INSTANCE` (default `main`).
@@ -37,6 +50,8 @@ one machine without colliding:
 - tmux session: `tele-agent` for main, `tele-agent-<instance>` otherwise
 - scratch: `~/.local/share/tele-agent` for main,
   `~/.local/share/tele-agent-<instance>` otherwise
+- Codex home: the configured main home for `main`, and
+  `~/.local/share/tele-agent-<instance>/codex-home` otherwise
 - secrets: `.secrets/notify.env` for main,
   `.secrets/notify-<instance>.env` otherwise
 - model config: `config/relay.env` first, then
@@ -52,6 +67,18 @@ TELEAGENT_INSTANCE=beta scripts/start_telegram_inbox.sh
 `TELEAGENT_SECRET_ENV` (or `--secret-env`) overrides the secret file for the
 listener and notification helpers. Per-instance readable log links live under
 `logs/readable-<instance>`.
+
+Non-main Codex homes are a hard isolation boundary. A non-main launch fails if
+its `TELEAGENT_CODEX_HOME` resolves to the main/source home. On first launch,
+`prepare_telegram_codex_home.sh` writes a private config and shares only the CLI
+credential file plus capability directories such as plugins and skills; it
+never copies or links sessions, history, thread state, goals,
+memories, or state databases.
+Each prepared home also has an atomic instance-owner marker, so two non-main
+instances cannot be configured to share the same private home.
+The agent registry records the expected home and rejects rollout files outside
+that home's `sessions/` directory, including mtime and Telegram-marker
+fallbacks.
 
 ## Reply Behavior
 
@@ -207,6 +234,12 @@ Without `config/relay.env`, the direct launcher uses `gpt-5.6-sol` with
 uses that configured default. Explicit `latest` always selects
 `gpt-5.6-sol` with `high` reasoning, regardless of the configured default;
 selecting Spark is also an explicit operator action.
+
+The supervisor passes `check_for_update_on_startup=false` by default so an
+unattended restart cannot stop at Codex's interactive update chooser. Maintain
+the centrally managed CLI separately with `codex update` (or rerun bootstrap).
+Set `TELEAGENT_CODEX_CHECK_FOR_UPDATE_ON_STARTUP=true` only for an attended
+launch where that chooser can be answered.
 
 ## Crash Recovery
 
