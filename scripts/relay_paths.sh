@@ -14,23 +14,37 @@ done
 export PATH
 unset tele_agent_bin_dir
 
+export TELEAGENT_INSTANCE="${TELEAGENT_INSTANCE:-main}"
+# For non-main instances, derive the source home from the main configuration,
+# never from a private home inherited during a supervisor re-exec.
+if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
+  unset TELEAGENT_CODEX_HOME TELEAGENT_CODEX_SOURCE_HOME
+fi
 if [[ -f "$TELEAGENT_REPO/config/relay.env" ]]; then
   # shellcheck disable=SC1091
   source "$TELEAGENT_REPO/config/relay.env"
 fi
 
-export TELEAGENT_INSTANCE="${TELEAGENT_INSTANCE:-main}"
+tele_agent_main_codex_home="${TELEAGENT_CODEX_HOME:-$HOME/.codex}"
 if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
   # Never leak another instance's ambient agent/session/config vars into this
   # instance. The instance's own relay-<instance>.env is the override point.
-  unset TELEAGENT_AGENT_DIR TELEAGENT_AGENT_ID TELEAGENT_AGENT_JSONL \
-    TELEAGENT_AGENT_META TELEAGENT_AGENT_OUTBOX TELEAGENT_AGENT_TARGET_PANE \
-    TELEAGENT_CODEX_BIN TELEAGENT_CODEX_HOME TELEAGENT_CODEX_MODEL \
+  # A launcher may deliberately pass a freshly registered agent binding to a
+  # supervisor. Preserve that binding only when the command-scoped sentinel is
+  # present; ordinary ambient bindings are still scrubbed.
+  if [[ "${TELEAGENT_PRESERVE_AGENT_BINDING:-0}" != "1" ]]; then
+    unset TELEAGENT_AGENT_DIR TELEAGENT_AGENT_ID TELEAGENT_AGENT_JSONL \
+      TELEAGENT_AGENT_META TELEAGENT_AGENT_OUTBOX \
+      TELEAGENT_AGENT_TARGET_PANE
+  fi
+  unset TELEAGENT_CODEX_BIN TELEAGENT_CODEX_CHECK_FOR_UPDATE_ON_STARTUP \
+    TELEAGENT_CODEX_HOME TELEAGENT_CODEX_MODEL TELEAGENT_CODEX_SOURCE_HOME \
     TELEAGENT_CODEX_REASONING_EFFORT TELEAGENT_CODEX_WINDOW \
     TELEAGENT_DS_CODEX_HOME TELEAGENT_DS_KEY_FILE TELEAGENT_INBOX_TARGET \
     TELEAGENT_LOG_DIR TELEAGENT_SCRATCH TELEAGENT_SECRET_ENV \
     TELEAGENT_PERSONALITY_FILE TELEAGENT_TMUX_SESSION
 fi
+unset TELEAGENT_PRESERVE_AGENT_BINDING
 if [[ "$TELEAGENT_INSTANCE" != "main" && -f "$TELEAGENT_REPO/config/relay-${TELEAGENT_INSTANCE}.env" ]]; then
   # shellcheck disable=SC1091
   source "$TELEAGENT_REPO/config/relay-${TELEAGENT_INSTANCE}.env"
@@ -40,13 +54,29 @@ if [[ "$TELEAGENT_INSTANCE" == "main" ]]; then
   export TELEAGENT_TMUX_SESSION="${TELEAGENT_TMUX_SESSION:-tele-agent}"
   export TELEAGENT_SCRATCH="${TELEAGENT_SCRATCH:-$HOME/.local/share/tele-agent}"
   export TELEAGENT_LOG_DIR="${TELEAGENT_LOG_DIR:-$TELEAGENT_SCRATCH/runtime}"
+  export TELEAGENT_CODEX_HOME="${TELEAGENT_CODEX_HOME:-$HOME/.codex}"
+  export TELEAGENT_CODEX_SOURCE_HOME="${TELEAGENT_CODEX_SOURCE_HOME:-$TELEAGENT_CODEX_HOME}"
 else
   # Non-main instances must never inherit another instance's ambient paths.
   # Their own relay-<instance>.env is the sanctioned override point.
   export TELEAGENT_TMUX_SESSION="${TELEAGENT_INSTANCE_TMUX_SESSION:-tele-agent-$TELEAGENT_INSTANCE}"
   export TELEAGENT_SCRATCH="${TELEAGENT_INSTANCE_SCRATCH:-$HOME/.local/share/tele-agent-$TELEAGENT_INSTANCE}"
   export TELEAGENT_LOG_DIR="${TELEAGENT_INSTANCE_LOG_DIR:-$TELEAGENT_SCRATCH/runtime}"
+  export TELEAGENT_CODEX_SOURCE_HOME="${TELEAGENT_CODEX_SOURCE_HOME:-$tele_agent_main_codex_home}"
+  export TELEAGENT_CODEX_HOME="${TELEAGENT_CODEX_HOME:-$TELEAGENT_SCRATCH/codex-home}"
+
+  # Separate relay instances must never share Codex's session/state home. This
+  # is a hard launch invariant, not a convention: a bad override fails closed
+  # before either the inbox or Codex can start.
+  tele_agent_codex_home_resolved="$(realpath -m "$TELEAGENT_CODEX_HOME")"
+  tele_agent_source_home_resolved="$(realpath -m "$TELEAGENT_CODEX_SOURCE_HOME")"
+  if [[ "$tele_agent_codex_home_resolved" == "$tele_agent_source_home_resolved" ]]; then
+    echo "non-main instance '$TELEAGENT_INSTANCE' must use a private TELEAGENT_CODEX_HOME" >&2
+    return 1 2>/dev/null || exit 1
+  fi
+  unset tele_agent_codex_home_resolved tele_agent_source_home_resolved
 fi
+unset tele_agent_main_codex_home
 export TELEAGENT_AGENT_DIR="${TELEAGENT_AGENT_DIR:-$TELEAGENT_LOG_DIR/agents}"
 
 if [[ "$TELEAGENT_INSTANCE" == "main" ]]; then
@@ -69,4 +99,70 @@ tele_agent_log() {
   local message="$*"
   mkdir -p "$TELEAGENT_LOG_DIR"
   printf '[%s] %s\n' "$(date -Iseconds)" "$message" | tee -a "$TELEAGENT_LOG_DIR/control.log"
+}
+
+# A tmux server keeps the environment of the process that created it.  If a
+# cron job starts the shared server first, tmux can therefore inherit
+# SHELL=/bin/sh even though this project requires Bash.  Always give managed
+# panes an explicit Bash command instead of relying on tmux's default-shell.
+tele_agent_tmux_bash_shell_command() {
+  local bash_bin bash_bin_q
+  bash_bin="$(command -v bash)" || {
+    echo "bash is required for managed tele-agent tmux panes" >&2
+    return 1
+  }
+  printf -v bash_bin_q '%q' "$bash_bin"
+  printf 'exec %s --noprofile --norc' "$bash_bin_q"
+}
+
+tele_agent_tmux_bash_command() {
+  local command_text="${1:?managed tmux command is required}"
+  local bash_bin bash_bin_q command_q
+  bash_bin="$(command -v bash)" || {
+    echo "bash is required for managed tele-agent tmux panes" >&2
+    return 1
+  }
+  printf -v bash_bin_q '%q' "$bash_bin"
+  printf -v command_q '%q' "$command_text"
+  printf 'exec %s --noprofile --norc -c %s' "$bash_bin_q" "$command_q"
+}
+
+tele_agent_claim_codex_home() {
+  local requested_home="${1:?Codex home is required}"
+  local instance="${TELEAGENT_INSTANCE:-main}"
+  local target_home owner_path lock_path owner owner_tmp
+  local owner_fd
+
+  target_home="$(realpath -m "$requested_home")"
+  mkdir -p "$target_home"
+  chmod 700 "$target_home"
+  owner_path="$target_home/.tele-agent-instance"
+  lock_path="$target_home/.tele-agent-instance.lock"
+  exec {owner_fd}>"$lock_path"
+  chmod 600 "$lock_path"
+  flock -x "$owner_fd"
+
+  if [[ -e "$owner_path" || -L "$owner_path" ]]; then
+    if [[ ! -f "$owner_path" || -L "$owner_path" ]]; then
+      echo "invalid Codex home ownership marker: $owner_path" >&2
+      exec {owner_fd}>&-
+      return 1
+    fi
+    owner="$(head -n 1 "$owner_path")"
+    if [[ "$owner" != "$instance" ]]; then
+      echo "Codex home $target_home belongs to tele-agent instance '$owner', not '$instance'" >&2
+      exec {owner_fd}>&-
+      return 1
+    fi
+  else
+    owner_tmp="$(mktemp "$target_home/.tele-agent-instance.XXXXXX")"
+    if ! printf '%s\n' "$instance" > "$owner_tmp" || \
+       ! chmod 600 "$owner_tmp" || \
+       ! mv -f -- "$owner_tmp" "$owner_path"; then
+      rm -f -- "$owner_tmp"
+      exec {owner_fd}>&-
+      return 1
+    fi
+  fi
+  exec {owner_fd}>&-
 }

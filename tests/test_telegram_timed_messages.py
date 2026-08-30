@@ -31,7 +31,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
         self.message = {
             "message_id": 4197,
             "date": 1_785_116_720,
-            "chat": {"id": "123"},
+            "chat": {"id": "123", "type": "private"},
             "from": {"id": 456, "username": "tester", "first_name": "Test"},
             "text": "/timed 0.5 check the goal agent now",
             "reply_to_message": {

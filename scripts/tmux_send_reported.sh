@@ -47,8 +47,9 @@ fi
 
 COMMAND="$1"
 printf -v repo_q '%q' "$TELEAGENT_REPO"
+printf -v instance_q '%q' "${TELEAGENT_INSTANCE:-main}"
 printf -v title_q '%q' "$TITLE"
 printf -v command_q '%q' "$COMMAND"
-WRAPPED="cd $repo_q && source scripts/relay_paths.sh && scripts/tmux_run_with_report.sh --title $title_q -- bash -lc $command_q"
+WRAPPED="cd $repo_q && export TELEAGENT_INSTANCE=$instance_q && source scripts/relay_paths.sh && scripts/tmux_run_with_report.sh --title $title_q -- bash -lc $command_q"
 tmux send-keys -t "$SESSION" "$WRAPPED" C-m
 tele_agent_log "sent reported command to tmux session=$SESSION title=$TITLE"

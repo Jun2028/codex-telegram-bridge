@@ -162,14 +162,31 @@ bash "$SCRIPT_DIR/start_codex_agent.sh"
 
 step "Installing the reboot watchdog"
 if command -v crontab >/dev/null 2>&1; then
+  watchdog_instance="${TELEAGENT_INSTANCE:-main}"
   printf -v watchdog_q '%q' "$SCRIPT_DIR/ensure_telegram_relay.sh"
-  if ! crontab -l 2>/dev/null | grep -q 'ensure_telegram_relay.sh'; then
+  printf -v watchdog_instance_q '%q' "$watchdog_instance"
+  watchdog_marker="tele-agent-relay:$watchdog_instance"
+  watchdog_present=0
+  if crontab -l 2>/dev/null | grep -Fq "# $watchdog_marker"; then
+    watchdog_present=1
+  elif [[ "$watchdog_instance" == "main" ]] && \
+       crontab -l 2>/dev/null | grep -Eq \
+         'ensure_telegram_relay[.]sh.*#[[:space:]]*tele-agent-relay[[:space:]]*$'; then
+    # Recognize the pre-instance legacy entry so an upgrade does not install a
+    # duplicate main watchdog.
+    watchdog_present=1
+  fi
+  if [[ "$watchdog_present" -ne 1 ]]; then
     (
       crontab -l 2>/dev/null || true
-      printf '@reboot %s >/dev/null 2>&1 # tele-agent-relay\n' "$watchdog_q"
-      printf '*/1 * * * * %s >/dev/null 2>&1 # tele-agent-relay\n' "$watchdog_q"
+      printf '@reboot TELEAGENT_INSTANCE=%s %s >/dev/null 2>&1 # %s\n' \
+        "$watchdog_instance_q" "$watchdog_q" "$watchdog_marker"
+      printf '*/1 * * * * TELEAGENT_INSTANCE=%s %s >/dev/null 2>&1 # %s\n' \
+        "$watchdog_instance_q" "$watchdog_q" "$watchdog_marker"
     ) | crontab -
-    echo "Crontab watchdog installed."
+    echo "Crontab watchdog installed for instance $watchdog_instance."
+  else
+    echo "Crontab watchdog already installed for instance $watchdog_instance."
   fi
 else
   echo "Crontab is unavailable; the agent is running, but automatic recovery after a reboot was not installed."

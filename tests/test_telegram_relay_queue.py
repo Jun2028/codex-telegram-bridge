@@ -38,7 +38,7 @@ class TelegramRelayQueueTests(unittest.TestCase):
             "message": {
                 "message_id": message_id,
                 "date": 1_900_000_000,
-                "chat": {"id": "123"},
+                "chat": {"id": "123", "type": "private"},
                 "from": {"id": 456, "username": "tester"},
                 "text": text,
             },
@@ -190,7 +190,7 @@ class TelegramRelayQueueTests(unittest.TestCase):
 
         delivered: list[int] = []
 
-        def fake_handle(update, *_args):
+        def fake_handle(update, *_args, **_kwargs):
             delivered.append(update["message"]["message_id"])
 
         with (

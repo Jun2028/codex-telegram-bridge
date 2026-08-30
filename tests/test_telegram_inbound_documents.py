@@ -55,7 +55,7 @@ class TelegramInboundDocumentTests(unittest.TestCase):
         message = {
             "message_id": 91,
             "date": 1_900_000_000,
-            "chat": {"id": "123"},
+            "chat": {"id": "123", "type": "private"},
             "from": {"id": 456, "username": "tester"},
             "document": {
                 "file_id": "telegram-file-id",

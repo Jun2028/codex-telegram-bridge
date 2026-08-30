@@ -6,12 +6,15 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/relay_paths.sh"
 
 SESSION="${1:-tele-agent}"
+TMUX_SHELL_COMMAND="$(tele_agent_tmux_bash_shell_command)"
+printf -v instance_q '%q' "${TELEAGENT_INSTANCE:-main}"
 
 if tmux has-session -t "$SESSION" 2>/dev/null; then
   tele_agent_log "tmux session $SESSION already exists"
 else
-  tmux new-session -d -s "$SESSION" -c "$TELEAGENT_REPO"
-  tmux send-keys -t "$SESSION" "source scripts/relay_paths.sh" C-m
+  tmux new-session -d -s "$SESSION" -c "$TELEAGENT_REPO" "$TMUX_SHELL_COMMAND"
+  tmux send-keys -t "$SESSION" \
+    "export TELEAGENT_INSTANCE=$instance_q && source scripts/relay_paths.sh" C-m
   tele_agent_log "Started tmux session $SESSION at $TELEAGENT_REPO"
 fi
 

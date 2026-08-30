@@ -133,12 +133,44 @@ def iso_timestamp_epoch(value: Any) -> float | None:
         return None
 
 
+def normalize_codex_home(value: str | Path | None) -> Path | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        return Path(text).expanduser().resolve()
+    except OSError:
+        return None
+
+
+def codex_home_from_meta(meta: dict[str, Any]) -> Path | None:
+    return normalize_codex_home(meta.get("codex_home"))
+
+
+def codex_session_under_home(session_path: Path, codex_home: str | Path) -> bool:
+    home = normalize_codex_home(codex_home)
+    if home is None:
+        return False
+    sessions_root = home / "sessions"
+    if sessions_root.is_symlink():
+        return False
+    try:
+        return session_path.resolve().is_relative_to(sessions_root.resolve())
+    except OSError:
+        return False
+
+
 def launch_requires_fresh_session(meta: dict[str, Any]) -> bool:
     return str(meta.get("launch_source") or "") in NEW_PROCESS_LAUNCH_SOURCES
 
 
 def codex_session_matches_agent(meta: dict[str, Any], session_path: Path) -> bool:
     if not session_path.is_file():
+        return False
+    expected_home = codex_home_from_meta(meta)
+    if expected_home is not None and not codex_session_under_home(
+        session_path, expected_home
+    ):
         return False
     session_meta = codex_session_metadata(session_path)
     session_cwd = str(session_meta.get("cwd") or "")
@@ -175,6 +207,7 @@ def update_active_pane(meta: dict[str, Any]) -> None:
     active = {
         "agent_id": meta.get("agent_id"),
         "agent_jsonl": meta.get("agent_jsonl"),
+        "codex_home": meta.get("codex_home"),
         "codex_session_path": meta.get("codex_session_path"),
         "meta_json": meta.get("meta_json"),
         "target_pane": target_pane,
@@ -246,6 +279,7 @@ def create_agent(
     target_pane: str,
     launch_source: str,
     start_epoch: float | None = None,
+    codex_home: str | Path | None = None,
 ) -> dict[str, Any]:
     if start_epoch is None:
         start_epoch = time.time()
@@ -267,6 +301,9 @@ def create_agent(
         "tmux_window": window,
         "target_pane": target_pane,
     }
+    normalized_home = normalize_codex_home(codex_home)
+    if normalized_home is not None:
+        meta["codex_home"] = str(normalized_home)
     write_json(meta_path, meta)
     update_active_pane(meta)
     append_jsonl(index_path(), {"event": "agent_registered", **meta})
@@ -401,6 +438,7 @@ def codex_session_for_pane(
 
 def codex_newest_session_for_pane(
     target_pane: str,
+    codex_home: str | Path | None = None,
 ) -> tuple[Path | None, str]:
     """Return the most recently written rollout held open by the pane's Codex.
 
@@ -412,9 +450,16 @@ def codex_newest_session_for_pane(
     root_pid = tmux_pane_pid(target_pane)
     if root_pid is None:
         return None, "tmux_pane_pid_unavailable"
+    session_roots = codex_session_roots_for_pane(
+        target_pane, codex_home=codex_home
+    )
     candidates: list[Path] = []
     for pid in closest_codex_pids(root_pid, ps_rows()):
-        candidates.extend(session_files_open_by_pid(pid))
+        candidates.extend(
+            path
+            for path in session_files_open_by_pid(pid)
+            if any(path_is_within(path, root) for root in session_roots)
+        )
     newest: Path | None = None
     try:
         newest = max(candidates, key=lambda path: path.stat().st_mtime)
@@ -425,14 +470,6 @@ def codex_newest_session_for_pane(
     # (sub-process boundaries hide it). Fall back to the most recently
     # written rollout across every Codex home this pane may use.
     recent_cutoff = time.time() - 900
-    session_roots = [
-        Path(home) / "sessions" for home in codex_homes_for_pane(target_pane)
-    ]
-    session_roots.extend(
-        [
-            Path.home() / ".codex" / "sessions",
-        ]
-    )
     seen: set[Path] = set()
     for root in session_roots:
         if not root.is_dir():
@@ -463,6 +500,7 @@ _TELEGRAM_USER_MESSAGE_MARKER = re.compile(
 
 def codex_session_with_latest_user_message(
     target_pane: str,
+    codex_home: str | Path | None = None,
 ) -> tuple[Path | None, str]:
     """Find the rollout that most recently received a relayed Telegram marker.
 
@@ -471,13 +509,8 @@ def codex_session_with_latest_user_message(
     actually answers. The agent answers in whichever rollout recorded the
     newest relay marker, so prefer that file.
     """
-    session_roots = [
-        Path(home) / "sessions" for home in codex_homes_for_pane(target_pane)
-    ]
-    session_roots.extend(
-        [
-            Path.home() / ".codex" / "sessions",
-        ]
+    session_roots = codex_session_roots_for_pane(
+        target_pane, codex_home=codex_home
     )
     recent: list[tuple[float, Path]] = []
     cutoff = time.time() - 900
@@ -528,14 +561,78 @@ def codex_homes_for_pane(target_pane: str) -> list[Path]:
     return homes
 
 
+def path_is_within(path: Path, root: Path) -> bool:
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except OSError:
+        return False
+
+
+def codex_session_roots_for_pane(
+    target_pane: str,
+    codex_home: str | Path | None = None,
+) -> list[Path]:
+    """Return only the session roots attributable to this managed pane.
+
+    A recorded home is authoritative. Process homes are used for legacy
+    metadata, and global defaults are considered only when neither source can
+    identify a home. This prevents one instance from following another
+    instance's newest rollout by mtime or Telegram marker.
+    """
+    homes: list[Path] = []
+    explicit_home = normalize_codex_home(codex_home)
+    if explicit_home is not None:
+        homes = [explicit_home]
+    else:
+        active = active_agent_for_pane(target_pane)
+        active_home = codex_home_from_meta(active or {})
+        if active_home is not None:
+            homes = [active_home]
+        else:
+            homes = [
+                home
+                for home in (
+                    normalize_codex_home(candidate)
+                    for candidate in codex_homes_for_pane(target_pane)
+                )
+                if home is not None
+            ]
+    if not homes:
+        homes = [Path.home() / ".codex"]
+
+    roots: list[Path] = []
+    seen: set[Path] = set()
+    for home in homes:
+        root = home / "sessions"
+        try:
+            key = root.resolve()
+        except OSError:
+            key = root
+        if key in seen:
+            continue
+        seen.add(key)
+        roots.append(root)
+    return roots
+
+
 def recent_codex_session(
     start_epoch: float | None = None,
     repo_root: str | Path | None = None,
     extra_homes: list[Path] | tuple[Path, ...] | None = None,
 ) -> tuple[Path | None, str]:
-    bases: set[Path] = {Path.home() / ".codex" / "sessions"}
-    for home in extra_homes or ():
-        bases.add(home / "sessions")
+    explicit_homes = [
+        home
+        for home in (
+            normalize_codex_home(candidate) for candidate in (extra_homes or ())
+        )
+        if home is not None
+    ]
+    if explicit_homes:
+        bases: set[Path] = {home / "sessions" for home in explicit_homes}
+    else:
+        bases = {
+            Path.home() / ".codex" / "sessions",
+        }
     if not any(base.exists() for base in bases):
         return None, "sessions_dir_missing"
     files: list[Path] = []
@@ -623,11 +720,22 @@ def refresh_codex_session_link(
         except (TypeError, ValueError):
             fallback_epoch = None
     if session_path is None and fallback_epoch is not None:
+        expected_home = codex_home_from_meta(meta)
+        fallback_homes = (
+            [expected_home]
+            if expected_home is not None
+            else codex_homes_for_pane(target)
+        )
         session_path, method = recent_codex_session(
             fallback_epoch,
             repo_root=meta.get("repo_root"),
-            extra_homes=codex_homes_for_pane(target),
+            extra_homes=fallback_homes,
         )
+        if session_path is not None and not codex_session_matches_agent(
+            meta, session_path
+        ):
+            session_path = None
+            method = f"{method}_rejected"
     if session_path is None:
         if current_path_text and not current_path_valid:
             return clear_codex_session_link(meta, method)
@@ -656,9 +764,39 @@ def refresh_codex_session_link(
     return meta
 
 
-def adopt_existing_agent(repo_root: Path, session: str, window: str, target_pane: str, launch_source: str) -> dict[str, Any]:
+def adopt_existing_agent(
+    repo_root: Path,
+    session: str,
+    window: str,
+    target_pane: str,
+    launch_source: str,
+    codex_home: str | Path | None = None,
+) -> dict[str, Any]:
     meta = active_agent_for_pane(target_pane)
     if meta and meta.get("agent_id"):
+        requested_home = normalize_codex_home(codex_home)
+        recorded_home = codex_home_from_meta(meta)
+        if (
+            requested_home is not None
+            and recorded_home is not None
+            and requested_home != recorded_home
+        ):
+            raise RuntimeError(
+                f"refusing to adopt {target_pane}: recorded Codex home "
+                f"{recorded_home} differs from configured home {requested_home}"
+            )
+        if requested_home is not None and recorded_home is None:
+            meta["codex_home"] = str(requested_home)
+            if meta.get("meta_json"):
+                write_json(Path(str(meta["meta_json"])), meta)
+            update_active_pane(meta)
+            append_agent_event(
+                meta,
+                {
+                    "event": "codex_home_recorded",
+                    "codex_home": str(requested_home),
+                },
+            )
         return refresh_codex_session_link(meta, target_pane=target_pane)
     meta = create_agent(
         repo_root=repo_root,
@@ -666,6 +804,7 @@ def adopt_existing_agent(repo_root: Path, session: str, window: str, target_pane
         window=window,
         target_pane=target_pane,
         launch_source=launch_source,
+        codex_home=codex_home,
     )
     append_agent_event(meta, {"event": "agent_adopted_existing_pane"})
     return refresh_codex_session_link(meta, target_pane=target_pane)
@@ -673,6 +812,7 @@ def adopt_existing_agent(repo_root: Path, session: str, window: str, target_pane
 
 def shell_env_prefix(meta: dict[str, Any]) -> str:
     env = {
+        "TELEAGENT_PRESERVE_AGENT_BINDING": "1",
         "TELEAGENT_AGENT_ID": str(meta["agent_id"]),
         "TELEAGENT_AGENT_JSONL": str(meta["agent_jsonl"]),
         "TELEAGENT_AGENT_META": str(meta["meta_json"]),
@@ -707,6 +847,7 @@ def main() -> int:
     create_parser.add_argument("--target-pane", required=True)
     create_parser.add_argument("--launch-source", default="manual")
     create_parser.add_argument("--start-epoch", type=float, default=None)
+    create_parser.add_argument("--codex-home", type=Path, default=None)
     create_parser.add_argument("--shell-exports", action="store_true")
 
     adopt_parser = subparsers.add_parser("adopt")
@@ -715,6 +856,7 @@ def main() -> int:
     adopt_parser.add_argument("--window", required=True)
     adopt_parser.add_argument("--target-pane", required=True)
     adopt_parser.add_argument("--launch-source", default="adopted-existing")
+    adopt_parser.add_argument("--codex-home", type=Path, default=None)
     adopt_parser.add_argument("--shell-exports", action="store_true")
 
     link_parser = subparsers.add_parser("link")
@@ -737,6 +879,7 @@ def main() -> int:
             target_pane=args.target_pane,
             launch_source=args.launch_source,
             start_epoch=args.start_epoch,
+            codex_home=args.codex_home,
         )
         if args.shell_exports:
             print_shell_exports(meta)
@@ -750,6 +893,7 @@ def main() -> int:
             window=args.window,
             target_pane=args.target_pane,
             launch_source=args.launch_source,
+            codex_home=args.codex_home,
         )
         if args.shell_exports:
             print_shell_exports(meta)

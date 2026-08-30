@@ -17,6 +17,7 @@ source "$SCRIPT_DIR/relay_paths.sh"
 MODEL="${TELEAGENT_CODEX_MODEL:-gpt-5.6-sol}"
 REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-high}"
 CODEX_BIN="${TELEAGENT_CODEX_BIN:-codex}"
+CHECK_FOR_UPDATE_ON_STARTUP="${TELEAGENT_CODEX_CHECK_FOR_UPDATE_ON_STARTUP:-false}"
 MAX_RESTARTS="${TELEAGENT_CODEX_SUPERVISOR_MAX_RESTARTS:-0}"
 STABLE_SECONDS="${TELEAGENT_CODEX_SUPERVISOR_STABLE_SECONDS:-300}"
 BASE_DELAY="${TELEAGENT_CODEX_SUPERVISOR_BASE_DELAY:-5}"
@@ -45,6 +46,14 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+case "$CHECK_FOR_UPDATE_ON_STARTUP" in
+  true|false) ;;
+  *)
+    echo "TELEAGENT_CODEX_CHECK_FOR_UPDATE_ON_STARTUP must be true or false" >&2
+    exit 2
+    ;;
+esac
 
 if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
   echo "codex CLI not found: $CODEX_BIN" >&2
@@ -88,13 +97,17 @@ while [[ "$stop_requested" -eq 0 ]]; do
     fi
     unset OPENAI_API_KEY OPENAI_BASE_URL || true
   else
-    export CODEX_HOME="${TELEAGENT_CODEX_HOME:-$HOME/.codex}"
+    if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
+      "$SCRIPT_DIR/prepare_telegram_codex_home.sh" >/dev/null
+    fi
+    export CODEX_HOME="$TELEAGENT_CODEX_HOME"
     unset DEEPSEEK_API_KEY OPENAI_BASE_URL || true
   fi
 
   codex_args=(
     --model "$MODEL"
     -c "model_reasoning_effort=\"$REASONING_EFFORT\""
+    -c "check_for_update_on_startup=$CHECK_FOR_UPDATE_ON_STARTUP"
     --no-alt-screen
     --sandbox danger-full-access
     --ask-for-approval never

@@ -61,6 +61,7 @@ done
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   "$SCRIPT_DIR/start_tmux.sh" "$SESSION" >/dev/null
 fi
+TMUX_SHELL_COMMAND="$(tele_agent_tmux_bash_shell_command)"
 
 if tmux list-windows -t "$SESSION" -F '#{window_name}' | grep -Fx "$WINDOW" >/dev/null; then
   if [[ "$RESTART" -ne 1 ]]; then
@@ -68,12 +69,15 @@ if tmux list-windows -t "$SESSION" -F '#{window_name}' | grep -Fx "$WINDOW" >/de
     echo "Use --restart to replace the command in that window." >&2
     exit 2
   fi
-  tmux send-keys -t "$SESSION:$WINDOW" C-c
+  tmux respawn-window -k -t "$SESSION:$WINDOW" -c "$TELEAGENT_REPO" \
+    "$TMUX_SHELL_COMMAND" >/dev/null
 else
-  tmux new-window -t "$SESSION" -n "$WINDOW" -c "$TELEAGENT_REPO" >/dev/null
+  tmux new-window -t "$SESSION" -n "$WINDOW" -c "$TELEAGENT_REPO" \
+    "$TMUX_SHELL_COMMAND" >/dev/null
 fi
 
 printf -v repo_q '%q' "$TELEAGENT_REPO"
+printf -v instance_q '%q' "${TELEAGENT_INSTANCE:-main}"
 printf -v session_q '%q' "$SESSION"
 printf -v interval_q '%q' "$INTERVAL"
 printf -v title_q '%q' "$TITLE"
@@ -82,7 +86,7 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
   DRY_ARG=" --dry-run"
 fi
 
-COMMAND="cd $repo_q && source scripts/relay_paths.sh && scripts/tmux_auto_report_loop.sh --session $session_q --interval $interval_q --title $title_q$DRY_ARG"
+COMMAND="cd $repo_q && export TELEAGENT_INSTANCE=$instance_q && source scripts/relay_paths.sh && scripts/tmux_auto_report_loop.sh --session $session_q --interval $interval_q --title $title_q$DRY_ARG"
 tmux send-keys -t "$SESSION:$WINDOW" "$COMMAND" C-m
 tele_agent_log "started tmux auto reporter: session=$SESSION window=$WINDOW interval=${INTERVAL}s"
 tmux display-message -p -t "$SESSION:$WINDOW" "session=#{session_name} window=#{window_name}"

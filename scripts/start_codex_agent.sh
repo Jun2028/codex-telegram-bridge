@@ -50,6 +50,18 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 1
 fi
 
+if [[ "$CODEX_MODEL" == deepseek-v4-flash || "$CODEX_MODEL" == deepseek-v4-pro ]]; then
+  AGENT_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
+  "$SCRIPT_DIR/prepare_telegram_ds_codex_home.sh" >/dev/null
+else
+  AGENT_CODEX_HOME="$TELEAGENT_CODEX_HOME"
+  if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
+    "$SCRIPT_DIR/prepare_telegram_codex_home.sh" >/dev/null
+  fi
+fi
+
+TMUX_SHELL_COMMAND="$(tele_agent_tmux_bash_shell_command)"
+
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   "$SCRIPT_DIR/start_tmux.sh" "$SESSION" >/dev/null
 fi
@@ -57,7 +69,8 @@ fi
 if tmux list-windows -t "$SESSION" -F '#{window_name}' | grep -Fx "$WINDOW" >/dev/null; then
   if [[ "$RESTART" -eq 1 ]]; then
     tmux kill-window -t "$SESSION:$WINDOW"
-    tmux new-window -t "$SESSION" -n "$WINDOW" -c "$TELEAGENT_REPO" >/dev/null
+    tmux new-window -t "$SESSION" -n "$WINDOW" -c "$TELEAGENT_REPO" \
+      "$TMUX_SHELL_COMMAND" >/dev/null
     CODEX_ALREADY_RUNNING=0
   else
     CURRENT_CMD="$(tmux display-message -p -t "$SESSION:$WINDOW.0" '#{pane_current_command}' 2>/dev/null || true)"
@@ -77,7 +90,8 @@ if tmux list-windows -t "$SESSION" -F '#{window_name}' | grep -Fx "$WINDOW" >/de
     fi
   fi
 else
-  tmux new-window -t "$SESSION" -n "$WINDOW" -c "$TELEAGENT_REPO" >/dev/null
+  tmux new-window -t "$SESSION" -n "$WINDOW" -c "$TELEAGENT_REPO" \
+    "$TMUX_SHELL_COMMAND" >/dev/null
   CODEX_ALREADY_RUNNING=0
 fi
 
@@ -114,6 +128,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
       --target-pane "$TARGET_PANE" \
       --launch-source "start_codex_agent.sh" \
       --start-epoch "$START_EPOCH" \
+      --codex-home "$AGENT_CODEX_HOME" \
       --shell-exports
   )"
   printf -v agent_id_q '%q' "$TELEAGENT_AGENT_ID"
@@ -122,7 +137,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
   printf -v agent_outbox_q '%q' "$TELEAGENT_AGENT_OUTBOX"
   printf -v agent_target_q '%q' "$TELEAGENT_AGENT_TARGET_PANE"
   printf -v telegram_log_dir_q '%q' "$TELEAGENT_LOG_DIR"
-  CODEX_AGENT_ENV="TELEAGENT_AGENT_ID=$agent_id_q TELEAGENT_AGENT_JSONL=$agent_jsonl_q TELEAGENT_AGENT_META=$agent_meta_q TELEAGENT_AGENT_OUTBOX=$agent_outbox_q TELEAGENT_AGENT_TARGET_PANE=$agent_target_q TELEAGENT_LOG_DIR=$telegram_log_dir_q"
+  CODEX_AGENT_ENV="TELEAGENT_PRESERVE_AGENT_BINDING=1 TELEAGENT_AGENT_ID=$agent_id_q TELEAGENT_AGENT_JSONL=$agent_jsonl_q TELEAGENT_AGENT_META=$agent_meta_q TELEAGENT_AGENT_OUTBOX=$agent_outbox_q TELEAGENT_AGENT_TARGET_PANE=$agent_target_q TELEAGENT_LOG_DIR=$telegram_log_dir_q"
   CODEX_COMMAND="cd $repo_q && export TELEAGENT_INSTANCE=$instance_q && source scripts/relay_paths.sh && ${DS_EXTRA}$CODEX_AGENT_ENV $supervisor_q --model $codex_model_q --reasoning-effort $codex_reasoning_q"
 
   tmux send-keys -t "$TARGET_PANE" "$CODEX_COMMAND" C-m
@@ -153,6 +168,7 @@ else
       --window "$WINDOW" \
       --target-pane "$TARGET_PANE" \
       --launch-source "start_codex_agent.sh-reuse" \
+      --codex-home "$AGENT_CODEX_HOME" \
       --shell-exports
   )"
 fi
