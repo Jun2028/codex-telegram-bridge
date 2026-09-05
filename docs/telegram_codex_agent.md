@@ -30,11 +30,9 @@ running agent and starts a fresh chat. Neither accepts a task prompt.
 
 Use `/status` or its Refresh button for actual activity, model, authentication,
 queue counts and the age of the last reply check. `/ping` checks the listener.
-`/queue` lists current waiting work and pending receipt checks. Its History
-button (or `/queue history`) shows archived checks with dates, reasons and any
-later receipt found in the recorded agent session. These records describe
-message receipt, not task success, and viewing them never clears or resubmits
-anything. Cancel an unsent item with
+`/queue` lists waiting work, pending receipt checks and delivery problems with
+dates and reasons. An unconfirmed receipt does not mean the task failed;
+check before resending. Cancel an unsent item with
 `/cancel ID`; cancelling a queued item does not interrupt the running task.
 
 During an ordinary turn, input from the bound chat can steer that task. Inputs
