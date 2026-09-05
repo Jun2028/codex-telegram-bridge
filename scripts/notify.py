@@ -257,6 +257,9 @@ def telegram_safe_message(title: str, message: str) -> str:
             if ":" in line:
                 key, value = line.split(":", 1)
                 fields[key.strip()] = value.strip()
+        # Preserve resource fields from already-running, older report wrappers.
+        fields.setdefault("job_id", fields.get("pbs_jobid", ""))
+        fields.setdefault("resources", fields.get("requested_compute", ""))
         result = fields.get("status", "Update").capitalize()
         if fields.get("exit_status") not in (None, "", "0"):
             result += " (exit " + fields["exit_status"] + ")"
@@ -264,14 +267,23 @@ def telegram_safe_message(title: str, message: str) -> str:
         lines = [" · ".join(details)]
         if fields.get("finished_at"):
             lines.append("Finished: " + fields["finished_at"])
-        if fields.get("pbs_jobid"):
-            lines.append("Job: " + fields["pbs_jobid"])
+        for key, label in (
+            ("job_id", "Job"),
+            ("resources", "Resources"),
+            ("compute_used", "Compute used"),
+            ("allocation_time", "Allocation time"),
+            ("scheduler_usage", "Scheduler usage"),
+        ):
+            if fields.get(key):
+                lines.append(label + ": " + fields[key])
+        summary_lines = 0
         for raw in summary.splitlines():
             line = raw.strip().lstrip("- ")
             if not line or any(marker in line.lower() for marker in ("traceback", "command:", "[info]", "[debug]", "[error]", "qstat:", "tmux:")):
                 continue
             lines.append(line[:220])
-            if len(lines) >= 6:
+            summary_lines += 1
+            if summary_lines >= 3:
                 break
         return "\n".join(lines)
 
@@ -316,8 +328,7 @@ def telegram_safe_message(title: str, message: str) -> str:
         fields[key.strip()] = value.strip()
 
     status = fields.get("exit_status")
-    pbs_jobid = fields.get("pbs_jobid")
-    pbs_queue = fields.get("pbs_queue")
+    job_id = fields.get("job_id")
 
     if "started" in title.lower():
         summary = "Process started. Detailed commands and logs are kept local."
@@ -329,10 +340,8 @@ def telegram_safe_message(title: str, message: str) -> str:
         summary = "Status update. Detailed commands and logs are kept local."
 
     details = []
-    if pbs_jobid:
-        details.append(f"PBS job: {pbs_jobid}")
-    if pbs_queue:
-        details.append(f"queue: {pbs_queue}")
+    if job_id:
+        details.append(f"Job: {job_id}")
     if details:
         return f"{summary}\n" + "; ".join(details)
     return summary
@@ -393,9 +402,6 @@ def build_message(args: argparse.Namespace, env: dict[str, str]) -> str:
             path = Path.cwd() / path
         assert_safe_local_path(path)
         pieces.append(path.read_text(encoding="utf-8"))
-    if args.include_qstat:
-        qstat = run_short(["qstat", "-u", os.environ.get("USER", "")])
-        pieces.append("qstat:\n" + (qstat or "(no qstat output)"))
     if args.include_tmux:
         session = args.tmux_session or env.get("TELEAGENT_TMUX_SESSION", "tele-agent")
         pane = run_short(["tmux", "capture-pane", "-pt", f"{session}:0", "-S", f"-{args.tmux_lines}"])
@@ -482,10 +488,13 @@ def main() -> int:
     parser.add_argument("--allow-files", action="store_true", help="explicitly allow this file upload")
     parser.add_argument("--level", default="info", choices=["info", "success", "warning", "error"])
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--enqueue", action="store_true",
+        help="save a private Telegram notice for the listener to deliver and retry",
+    )
     parser.add_argument("--prefer", choices=["telegram", "email"], default="telegram")
     parser.add_argument("--send-all", action="store_true", help="send to all configured providers instead of first-success fallback")
     parser.add_argument("--timeout", type=int, default=15)
-    parser.add_argument("--include-qstat", action="store_true")
     parser.add_argument("--include-tmux", action="store_true")
     parser.add_argument("--tmux-session", default="")
     parser.add_argument("--tmux-lines", type=int, default=60)
@@ -498,6 +507,8 @@ def main() -> int:
     title = f"[{args.level.upper()}] {args.title}"
     message = build_message(args, env)
     attachment = prepare_attachment(args, env)
+    if args.enqueue and (attachment or args.send_all or args.prefer != "telegram"):
+        parser.error("--enqueue supports Telegram text only")
 
     providers = ["telegram", "email"] if args.prefer == "telegram" else ["email", "telegram"]
     configured = {
@@ -510,13 +521,39 @@ def main() -> int:
             "ts": int(time.time()),
             "dry_run": True,
             "title": title,
-            "message_preview": message[:500],
+            "message_preview": telegram_safe_message(title, message)[:500],
             "configured": configured,
         }
         if attachment:
             record["attachment"] = attachment.log_record()
         append_jsonl(repo_root, env, record)
         print(json.dumps(record, indent=2, sort_keys=True))
+        return 0
+
+    if args.enqueue:
+        from teleagent import replies
+
+        token = env_value(env, "TELEAGENT_BOT_TOKEN", "TELEGRAM_BOT_TOKEN")
+        destination = env_value(env, "TELEAGENT_CHAT_ID", "TELEGRAM_CHAT_ID")
+        if not token or not destination.isdigit() or int(destination) <= 0:
+            raise SystemExit(
+                "Queued notifications require a configured private Telegram destination."
+            )
+        scratch = Path(env.get("TELEAGENT_SCRATCH") or Path.home() / ".local/share/tele-agent")
+        runtime = Path(env.get("TELEAGENT_LOG_DIR") or scratch / "runtime")
+        queue_args = argparse.Namespace(
+            control_reply_state_path=str(runtime / "telegram_control_replies.state.json")
+        )
+        replies.send(
+            queue_args, token, destination,
+            redact(title, env) + "\n\n" + telegram_safe_message(title, message),
+        )
+        record = {
+            "ts": int(time.time()), "dry_run": False, "title": title,
+            "level": args.level, "queued": True,
+        }
+        append_jsonl(repo_root, env, record)
+        print(json.dumps(record, sort_keys=True))
         return 0
 
     results: list[NotifyResult] = []
