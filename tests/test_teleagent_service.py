@@ -256,10 +256,10 @@ class RelayServiceTests(unittest.TestCase):
             },
         )
         private = ui.queue_text(args, "123", False, None)
-        self.assertIn("Unconfirmed: 1", private)
+        self.assertIn("Delivery check waiting: 1", private)
         self.assertIn("13 Aug 22:54 · #2: receipt write permission denied", private)
         group = ui.queue_text(args, "-99", True, 7)
-        self.assertNotIn("Unconfirmed:", group)
+        self.assertNotIn("Delivery check waiting:", group)
         self.assertNotIn("Delivery problems:", group)
         self.assertNotIn("permission denied", group)
         state.write_json_object(Path(args.relay_confirmation_state_path), {})
