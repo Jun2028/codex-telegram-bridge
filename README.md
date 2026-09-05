@@ -26,7 +26,7 @@ new Telegram-specific command just to become a task.
 | Telegram action | What happens |
 | --- | --- |
 | `/status` | Shows working/idle/stopped/recovering, effective model, queue counts and reply-check age. Tap Refresh to check again. |
-| `/queue` | Shows waiting messages, incoming controls and failed deliveries. |
+| `/queue` | Shows current waiting work and pending receipts. Tap History for dated delivery checks. |
 | `/cancel ID` | Removes a waiting message. `/cancel all` removes the queue visible here. |
 | `/interrupt NEW TASK` | Aborts the managed turn, verifies it stopped, then submits the replacement instruction. |
 | `/models` | Lists model names and example commands. |
@@ -45,7 +45,8 @@ a separate message. Changing between provider homes starts a fresh conversation.
 
 If Telegram cannot deliver a control result, the relay saves and retries that
 reply without repeating the action. `/status` shows delivery failures; `/queue`
-shows failed or unconfirmed requests. Check an unconfirmed outcome before retrying.
+shows current work. `/queue history` keeps archived checks with dates, reasons
+and receipt evidence. A missing receipt does not establish that the task failed.
 
 ## Groups and private messages
 

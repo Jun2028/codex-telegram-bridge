@@ -284,8 +284,7 @@ def format_system_status(
             )
 
         waiting = sum(visible(item) for item in queue_state.get("tasks", []))
-        failed = sum(visible(item) for item in queue_state.get("failed", []))
-        lines.append(f"queue: {waiting} waiting · {failed} failed — /queue")
+        lines.append(f"queue: {waiting} waiting — /queue")
         health_path = getattr(args, "health_state_path", "")
         health = _state.read_json_object(Path(health_path)) if health_path else {}
         if health.get("control_update_id"):
