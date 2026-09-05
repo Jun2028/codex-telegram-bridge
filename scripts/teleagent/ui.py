@@ -131,7 +131,7 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
         lines.append(f"{task['id']} · {age} · {text}")
     if unconfirmed:
         lines.append(
-            f"Unconfirmed: {len(unconfirmed)} submitted message(s). Check before resending."
+            f"Delivery check waiting: {len(unconfirmed)} sent message(s). Check /status before resending."
         )
     if failures:
         lines.append(f"Delivery problems: {len(failures)}")
