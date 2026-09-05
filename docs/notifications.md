@@ -87,9 +87,9 @@ Do not clear offsets to retry delivery: it can replay old requests or replies.
 Control results and notices are saved before delivery. Telegram send failures
 retry the saved reply, not the command that produced it. `/status` distinguishes
 delivery failures from a healthy reply check and counts pending control replies.
-`/queue` shows current work; `/queue history` shows dated archived checks and
-receipt evidence. Group views keep private diagnostics out. An unconfirmed outcome means
-the action may already have happened, so inspect it before resubmitting.
+`/queue` shows waiting work and delivery problems with dates and reasons.
+Group views keep private diagnostics out. An unconfirmed outcome means the
+action may already have happened, so inspect it before resubmitting.
 
 A reset that was redeemed remains recorded as redeemed if its follow-up restart
 fails. The result explains which step failed and does not suggest redeeming a

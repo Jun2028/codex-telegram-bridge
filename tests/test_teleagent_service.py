@@ -229,7 +229,7 @@ class RelayServiceTests(unittest.TestCase):
                 queue.same_chat_can_steer(args, self.update(chat="-99", topic=8))
             )
 
-    def test_group_queue_hides_private_unconfirmed_submissions(self):
+    def test_queue_preserves_receipt_errors_and_hides_them_from_other_chats(self):
         args = self.args()
         args.relay_confirmation_state_path = str(self.root / "confirmations.json")
         args.reply_route_state_path = str(self.root / "routes.json")
@@ -244,11 +244,29 @@ class RelayServiceTests(unittest.TestCase):
                         "message_id": 1,
                         "relay_text": "[TELEGRAM USER MESSAGE message_id=1 route_id=u1 from user] private",
                     }
-                ]
+                ],
+                "failed": [
+                    {
+                        "message_id": 2,
+                        "created_ts": 1786632844,
+                        "last_error": "receipt write permission denied",
+                        "relay_text": "[TELEGRAM USER MESSAGE message_id=2 route_id=u1 from user] private",
+                    }
+                ],
             },
         )
-        self.assertIn("Unconfirmed: 1", ui.queue_text(args, "123", False, None))
-        self.assertNotIn("Unconfirmed:", ui.queue_text(args, "-99", True, 7))
+        private = ui.queue_text(args, "123", False, None)
+        self.assertIn("Unconfirmed: 1", private)
+        self.assertIn("13 Aug 22:54 · #2: receipt write permission denied", private)
+        group = ui.queue_text(args, "-99", True, 7)
+        self.assertNotIn("Unconfirmed:", group)
+        self.assertNotIn("Delivery problems:", group)
+        self.assertNotIn("permission denied", group)
+        state.write_json_object(Path(args.relay_confirmation_state_path), {})
+        self.assertEqual(
+            ui.queue_text(args, "123", False, None),
+            "Waiting: 0 · incoming: 0\nNo messages waiting for the agent.",
+        )
 
     def test_route_markers_inside_quoted_text_are_not_authoritative(self):
         self.assertIsNone(
