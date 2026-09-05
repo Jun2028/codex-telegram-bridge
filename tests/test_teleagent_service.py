@@ -145,6 +145,33 @@ class RelayServiceTests(unittest.TestCase):
             routing.resolve_source_chat(update, "123", "123", "OurBot", "token", {})[0]
         )
 
+    def test_group_identity_is_discovered_from_the_existing_private_setup(self):
+        with mock.patch.object(
+            transport, "telegram_api", return_value={"id": 999, "username": "OurBot"}
+        ) as api:
+            owner, username = routing.resolve_bot_identity("token", "123")
+        self.assertEqual((owner, username), ("123", "OurBot"))
+        api.assert_called_once_with("token", "getMe", timeout=10)
+        self.assertEqual(
+            routing.resolve_source_chat(
+                self.update(chat="-99", text="/status@OurBot"),
+                "123",
+                owner,
+                username,
+                "token",
+                {},
+            ),
+            ("-99", True, True),
+        )
+
+    def test_explicit_bot_identity_does_not_require_a_profile_query(self):
+        with mock.patch.object(transport, "telegram_api") as api:
+            self.assertEqual(
+                routing.resolve_bot_identity("token", "123", "456", "@NamedBot"),
+                ("456", "NamedBot"),
+            )
+        api.assert_not_called()
+
     def test_unknown_and_cross_chat_routes_cannot_send_to_a_group(self):
         routes = {
             "private": {"chat_id": "123"},

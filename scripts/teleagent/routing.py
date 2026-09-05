@@ -14,6 +14,20 @@ from . import state as _state
 from . import transport as _transport
 
 
+def resolve_bot_identity(
+    token: str, private_chat_id: str, owner_user_id: str = "", bot_username: str = ""
+) -> tuple[str, str]:
+    """A Telegram private chat identifies its owner; getMe supplies this bot."""
+    owner = str(owner_user_id or private_chat_id).strip()
+    username = str(bot_username or "").strip().lstrip("@")
+    if not username:
+        profile = _transport.telegram_api(token, "getMe", timeout=10)
+        username = str((profile or {}).get("username") or "").strip().lstrip("@")
+        if not username:
+            raise RuntimeError("Telegram did not return this bot's username")
+    return owner, username
+
+
 def message_mentions_bot(message: dict[str, Any], bot_username: str) -> bool:
     """Recognize exact bot addresses, captions, and replies to this bot."""
     username = str(bot_username or "").lstrip("@").casefold()
