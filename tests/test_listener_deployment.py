@@ -84,55 +84,6 @@ class ReportLauncherTests(unittest.TestCase):
                 queue_file.read_text(), '{"tasks": [{"id": "untouched"}]}\n'
             )
 
-    def test_job_uses_a_new_window_and_keeps_the_selected_pane_untouched(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            repo = root / "repo"
-            scripts = repo / "scripts"
-            scripts.mkdir(parents=True)
-            (scripts / "relay_paths.sh").symlink_to(ROOT / "scripts/relay_paths.sh")
-            runner = scripts / "tmux_run_with_report.sh"
-            runner.write_text(
-                '#!/bin/bash\nmkdir -p "$TELEAGENT_SCRATCH"\nprintf "started" > "$TELEAGENT_SCRATCH/result"\nsleep 30\n'
-            )
-            runner.chmod(0o755)
-            check = root / "check.sh"
-            check.write_text(
-                textwrap.dedent("""\
-                #!/bin/bash
-                set -euo pipefail
-                trap 'printf "fixture failed at line %s\\n" "$LINENO" >&2' ERR
-                tmux new-session -d -s report-fixture -n agent 'sleep 30'
-                before=$(tmux display-message -p -t report-fixture:agent.0 '#{pane_id}:#{pane_pid}')
-                "$TEST_RELAY_SOURCE/scripts/tmux_send_reported.sh" --session report-fixture --title 'fixture job' 'printf safe'
-                for attempt in {1..200}; do
-                  [[ -f "$TELEAGENT_SCRATCH/result" ]] && break
-                  sleep 0.05
-                done
-                test -f "$TELEAGENT_SCRATCH/result"
-                after=$(tmux display-message -p -t report-fixture:agent.0 '#{pane_id}:#{pane_pid}')
-                test "$before" = "$after"
-                test -z "$(tmux capture-pane -p -t report-fixture:agent.0 | tr -d '[:space:]')"
-                tmux list-windows -t report-fixture -F '#{window_name}' | grep -q '^job-fixture-job-'
-                """)
-            )
-            check.chmod(0o755)
-            environment = {
-                **os.environ,
-                "TELEAGENT_REPO": str(repo),
-                "TELEAGENT_SCRATCH": str(root / "scratch"),
-                "TELEAGENT_LOG_DIR": str(root / "runtime"),
-                "TEST_RELAY_SOURCE": str(ROOT),
-            }
-            result = subprocess.run(
-                [str(ROOT / "scripts/tmux_isolated_test.sh"), "--", str(check)],
-                env=environment,
-                capture_output=True,
-                text=True,
-                timeout=25,
-            )
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-
 
 if __name__ == "__main__":
     unittest.main()

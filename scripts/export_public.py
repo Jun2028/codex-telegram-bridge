@@ -13,36 +13,49 @@ import subprocess
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[1]
-ROOT_FILES = {"README.md", "LICENSE", ".gitignore"}
-CONFIG_FILES = {
-    "config/notify.env.template",
-    "config/relay.env.template",
-    "config/codex-chat-only.toml.template",
-    "config/chat-only-agent-instructions.md",
-    "config/personality.default.md",
-    "config/deepseek/models.json",
-    "config/deepseek/deepseek-v4-flash.json",
-    "config/deepseek/deepseek-v4-pro.json",
+PRIVATE_FILES = {
+    "scripts/tmux_run_with_report.sh",
+    "scripts/tmux_send_reported.sh",
+    "scripts/tmux_agent_report.py",
+    "scripts/tmux_auto_report_loop.sh",
+    "scripts/start_tmux_auto_reporter.sh",
+    "tests/test_report_launcher.py",
+    "tests/test_hpc_notifications.py",
+    "docs/hpc_notifications.md",
 }
 
 
-def allowed(name: str) -> bool:
+def manifest(text: str) -> set[str]:
+    return {
+        line.strip()
+        for line in text.splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
+def allowed(name: str, public_files: set[str] | None = None) -> bool:
+    if public_files is None:
+        public_files = manifest((SOURCE / "config/public-export.txt").read_text())
     path = Path(name)
     return (
-        name in ROOT_FILES
-        or name in CONFIG_FILES
-        or path.parts[0] == "scripts"
-        and path.suffix in {".py", ".sh"}
-        or path.parts[0] == "tests"
-        and path.suffix == ".py"
-        or path.parts[0] == "docs"
-        and path.suffix == ".md"
-        or name == ".github/workflows/check.yml"
+        name in public_files
+        and name not in PRIVATE_FILES
+        and not path.is_absolute()
+        and ".." not in path.parts
+        and path.parts[0] != "private"
     )
 
 
 def public_readme(text: str) -> str:
     text = text.replace("# tele-agent\n", "# Codex Telegram Bridge\n", 1)
+    text = re.sub(
+        r"<!-- PRIVATE-HPC-START -->.*?<!-- PRIVATE-HPC-END -->\n\n",
+        "",
+        text,
+        flags=re.DOTALL,
+    )
+    if "PRIVATE-HPC-" in text:
+        raise ValueError("Unclosed private README section")
     if "This private repository is the source" not in text:
         return text
     start = text.index("This private repository is the source")
@@ -69,6 +82,25 @@ def main() -> int:
         ],
         text=True,
     ).strip()
+    public_files = manifest(
+        subprocess.check_output(
+            ["git", "-C", str(SOURCE), "show", revision + ":config/public-export.txt"],
+            text=True,
+        )
+    )
+    invalid = [name for name in public_files if not allowed(name, public_files)]
+    if invalid:
+        raise SystemExit(
+            "Private or invalid paths in public manifest: " + ", ".join(sorted(invalid))
+        )
+    leftovers = [name for name in PRIVATE_FILES if (target / name).exists()]
+    if (target / "private").exists():
+        leftovers.append("private/")
+    if leftovers:
+        raise SystemExit(
+            "Remove private files from the public checkout before exporting: "
+            + ", ".join(sorted(leftovers))
+        )
     names = (
         subprocess.check_output(
             ["git", "-C", str(SOURCE), "ls-tree", "-rz", "--name-only", revision]
@@ -78,7 +110,7 @@ def main() -> int:
     )
     exported = []
     for name in names:
-        if not name or not allowed(name):
+        if not name or not allowed(name, public_files):
             continue
         if name == "LICENSE" and (target / name).exists():
             continue  # Preserve the public project’s existing attribution.
@@ -94,6 +126,7 @@ def main() -> int:
                 b"# Tele-agent notification secrets.",
                 b"# Codex Telegram Bridge notification secrets.",
             )
+            data = data.replace(b"TELEAGENT_REPORT_INTERVAL_SECONDS=1800\n", b"")
         # Source only. Refuse obvious embedded credentials even in an allowed file.
         if re.search(
             rb"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b|\bsk-[A-Za-z0-9]{32,}\b|-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----",

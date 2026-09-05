@@ -23,37 +23,11 @@ Dry-run checks configuration without sending a message. Send a real test only
 when that send is authorized. Optional SMTP delivery is configured through the
 same notification environment template.
 
-## Remote experiments and long commands
-
-Use the reporting wrapper for a long command:
-
-```bash
-scripts/tmux_run_with_report.sh --title "Experiment A" -- python3 experiment.py
-```
-
-To start it in a new, dedicated tmux job window:
-
-```bash
-scripts/tmux_send_reported.sh --title "Experiment A" "python3 experiment.py"
-```
-
-The latter creates a job window; it does not type into the currently selected
-agent or shell pane. For complex commands, write a local script and run that
-script. Follow [tmux safety](tmux_safety.md) for all tests.
-
-Reports include process status, runtime and the actual completion time, so a
-late notification is distinguishable from a late process exit. A successful
-exit means the command completed; it does not prove experiment quality or that
-some larger run has finished. Raw matching log lines are not a result summary.
-
-The wrapper exports `TELEAGENT_RUN_LOG_PATH`, `TELEAGENT_RUN_SUMMARY_PATH` and
-`TELEAGENT_RUN_TITLE` to the child command. A task can write a short, reviewed
-result to the supplied summary path. Otherwise, the report states only the
-process outcome. Command strings and full logs remain local.
-
-For optional periodic reports, use `scripts/start_tmux_auto_reporter.sh`.
-Unscoped machine reports go to the configured private chat; they never inherit
-the most recently active group destination.
+`--enqueue` saves a text notice for the listener to deliver to the configured
+private Telegram chat, with retries across listener restarts. It uses the
+instance's `TELEAGENT_LOG_DIR`; the listener must use the same runtime directory.
+Queued text does not fall back to email or support attachments. The normal
+direct-send mode remains available for reviewed files and email fallback.
 
 ## Reviewed images and files
 
