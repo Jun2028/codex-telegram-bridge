@@ -276,11 +276,43 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(reasoning, "xhigh")
         self.assertTrue(explicit)
 
+    def test_parse_agent_launch_payload_accepts_astra(self) -> None:
+        model, reasoning, explicit = telegram_inbox.parse_agent_launch_payload(
+            "astra"
+        )
+
+        self.assertEqual(model, telegram_inbox.ASTRA_CODEX_AGENT_MODEL)
+        self.assertEqual(reasoning, "high")
+        self.assertTrue(explicit)
+
+    def test_parse_agent_launch_payload_rejects_unsupported_astra_effort(self) -> None:
+        for effort in ("none", "minimal", "ultra"):
+            with self.subTest(effort=effort), self.assertRaisesRegex(
+                ValueError, "GPT-6 Astra reasoning"
+            ):
+                telegram_inbox.parse_agent_launch_payload(f"astra {effort}")
+
     def test_parse_live_model_payload_accepts_ds_flash(self) -> None:
         model, reasoning = telegram_inbox.parse_live_model_payload("ds-flash")
 
         self.assertEqual(model, "deepseek-v4-flash")
         self.assertEqual(reasoning, "max")
+
+    def test_parse_live_model_payload_accepts_astra_alias(self) -> None:
+        model, reasoning = telegram_inbox.parse_live_model_payload("astra")
+
+        self.assertEqual(model, telegram_inbox.ASTRA_CODEX_AGENT_MODEL)
+        self.assertIsNone(reasoning)
+
+    def test_parse_live_model_payload_accepts_astra_effort(self) -> None:
+        model, reasoning = telegram_inbox.parse_live_model_payload("latest xhigh")
+
+        self.assertEqual(model, telegram_inbox.ASTRA_CODEX_AGENT_MODEL)
+        self.assertEqual(reasoning, "xhigh")
+
+    def test_parse_live_model_payload_rejects_unsupported_astra_effort(self) -> None:
+        with self.assertRaisesRegex(ValueError, "GPT-6 Astra reasoning"):
+            telegram_inbox.parse_live_model_payload("astra ultra")
 
     def test_parse_live_model_payload_keeps_latest_openai_only(self) -> None:
         with (
@@ -585,12 +617,16 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "fresh chat (context is not preserved)",
             help_text,
         )
-        self.assertIn("/model latest|spark|ds-flash|ds-pro [LEVEL]", help_text)
-        self.assertIn("With MODEL omitted, the configured default is used", help_text)
         self.assertIn(
-            "Explicit latest always selects gpt-5.6-sol with reasoning=high",
+            "/model latest|astra|sol|spark|ds-flash|ds-pro [LEVEL]",
             help_text,
         )
+        self.assertIn("With MODEL omitted, the configured default is used", help_text)
+        self.assertIn(
+            "Explicit latest always selects gpt-6-astra with reasoning=high",
+            help_text,
+        )
+        self.assertIn("astra is an explicit alias for gpt-6-astra", help_text)
         self.assertIn("ds-flash/ds-pro select deepseek-v4-flash / deepseek-v4-pro", help_text)
         self.assertIn("restart_agent ds-flash", help_text)
         self.assertIn("never accept prompts", help_text)

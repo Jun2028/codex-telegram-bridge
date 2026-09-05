@@ -231,9 +231,13 @@ Without `config/relay.env`, the direct launcher uses `gpt-5.6-sol` with
 `--ask-for-approval never`. The model and effort can be overridden with
 `TELEAGENT_CODEX_MODEL` and
 `TELEAGENT_CODEX_REASONING_EFFORT`. When a lifecycle command omits `MODEL`, it
-uses that configured default. Explicit `latest` always selects
-`gpt-5.6-sol` with `high` reasoning, regardless of the configured default;
-selecting Spark is also an explicit operator action.
+uses that configured default. Explicit `latest` (or `astra`) always selects
+`gpt-6-astra` with `high` reasoning, regardless of the configured default;
+`sol` explicitly selects the previous `gpt-5.6-sol` model, and selecting Spark
+is also an explicit operator action.
+
+The bootstrap requires Codex CLI 0.153.4 or newer; this is the first supported
+CLI line for GPT-6 Astra.
 
 The supervisor passes `check_for_update_on_startup=false` by default so an
 unattended restart cannot stop at Codex's interactive update chooser. Maintain
@@ -279,7 +283,7 @@ scripts/start_telegram_inbox.sh \
 /start_agent [MODEL] [LEVEL]
 /kill_agent
 /restart_agent [MODEL] [LEVEL]
-/model latest|spark|ds-flash [LEVEL]
+/model latest|astra|sol|spark|ds-flash|ds-pro [LEVEL]
 /reasoning LEVEL
 /interrupt PROMPT
 /timed HOURS MESSAGE
@@ -377,13 +381,14 @@ Agent lifecycle and model commands have non-overlapping meanings:
 - `/restart_agent [MODEL] [LEVEL]` requires a running agent and replaces it
   with a fresh chat; the previous conversation context is not preserved. When
   stopped, it refuses and directs the operator to `/start_agent`.
-- `/model latest|spark|ds-flash [LEVEL]` changes the model in the running chat
-  without restarting it. `latest` always resolves to `gpt-5.6-sol`,
-  independent of the configured default; `spark` resolves to
-  `gpt-5.3-codex-spark`, whose Codex usage
-  window is reported separately by `/codex_usage` and `/agent_status`; `ds-flash`
+- `/model latest|astra|sol|spark|ds-flash|ds-pro [LEVEL]` changes the model in the running chat
+  without restarting it. `latest` and `astra` always resolve to `gpt-6-astra`,
+  independent of the configured default; `sol` resolves to `gpt-5.6-sol`;
+  `spark` resolves to `gpt-5.3-codex-spark`, whose Codex usage window is
+  reported separately by `/codex_usage` and `/agent_status`; `ds-flash`
   resolves to `deepseek-v4-flash` for a DeepSeek-backed pane (for example the
   managed agent after `/restart_agent ds-flash`) and supports only `max`
+  reasoning. Astra supports `low`, `medium`, `high`, `xhigh`, and `max`
   reasoning. On an OpenAI pane the selector cannot offer `deepseek-v4-flash`,
   so run `/restart_agent ds-flash` first to relaunch the managed agent under
   the DeepSeek harness. When `LEVEL` is omitted, the live switch explicitly
@@ -393,11 +398,12 @@ Start and restart use the configured Telegram model when `MODEL` is omitted.
 The bootstrap configures `deepseek-v4-flash`; a manual installation with no
 override uses `gpt-5.6-sol`. A one-token legacy effort such as
 `/restart_agent max` still applies to that default model. Explicit model forms
-include `/restart_agent latest`, `/restart_agent spark`, `/restart_agent spark
-xhigh`, and `/restart_agent ds-flash`. Explicit `latest` always selects
-`gpt-5.6-sol` with `high` reasoning unless `LEVEL` is supplied. Spark supports
-`low`, `medium`, `high`, and `xhigh`; the latest model also supports `none`,
-`minimal`, `max`, and `ultra` where appropriate. `ds-flash` relaunches the
+include `/restart_agent latest`, `/restart_agent astra`, `/restart_agent sol`,
+`/restart_agent spark`, `/restart_agent spark xhigh`, and `/restart_agent ds-flash`.
+Explicit `latest` and `astra` always select `gpt-6-astra` with `high` reasoning
+unless `LEVEL` is supplied. Spark supports `low`, `medium`, `high`, and
+`xhigh`; Astra supports `low`, `medium`, `high`, `xhigh`, and `max`. `ds-flash`
+relaunches the
 managed agent with a DeepSeek Codex home
 (provider and catalog bundled under `config/deepseek/`, key supplied through
 `TELEAGENT_DS_KEY_FILE`) and is fixed to `max` reasoning. Lifecycle commands

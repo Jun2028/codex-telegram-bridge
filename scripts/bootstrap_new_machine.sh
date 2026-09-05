@@ -52,7 +52,8 @@ import re
 import sys
 
 match = re.search(r"(\d+)\.(\d+)\.(\d+)", sys.argv[1])
-raise SystemExit(0 if match and tuple(map(int, match.groups())) >= (0, 144, 0) else 1)
+# GPT-6 Astra requires the newer Codex protocol shipped in 0.153.4.
+raise SystemExit(0 if match and tuple(map(int, match.groups())) >= (0, 153, 4) else 1)
 PY
 }
 
