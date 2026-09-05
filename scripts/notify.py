@@ -84,17 +84,23 @@ def redact(text: str, env: dict[str, str]) -> str:
         key_lower = key.lower()
         if not value or len(value) < 8:
             continue
-        if any(marker in key_lower for marker in ("token", "password", "secret", "key")):
+        if any(
+            marker in key_lower for marker in ("token", "password", "secret", "key")
+        ):
             result = result.replace(value, "[redacted]")
     return result
 
 
 def run_short(args: list[str], timeout: int = 8) -> str:
     try:
-        completed = subprocess.run(args, check=False, capture_output=True, text=True, timeout=timeout)
+        completed = subprocess.run(
+            args, check=False, capture_output=True, text=True, timeout=timeout
+        )
     except Exception:
         return ""
-    output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part.strip())
+    output = "\n".join(
+        part.strip() for part in (completed.stdout, completed.stderr) if part.strip()
+    )
     return output.strip()
 
 
@@ -235,7 +241,9 @@ def send_telegram(
             method="POST",
         )
     try:
-        with urllib.request.urlopen(request, timeout=timeout, context=tls_context()) as response:
+        with urllib.request.urlopen(
+            request, timeout=timeout, context=tls_context()
+        ) as response:
             payload = json.loads(response.read().decode("utf-8"))
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
@@ -263,7 +271,9 @@ def telegram_safe_message(title: str, message: str) -> str:
         result = fields.get("status", "Update").capitalize()
         if fields.get("exit_status") not in (None, "", "0"):
             result += " (exit " + fields["exit_status"] + ")"
-        details = [result] + [fields[key] for key in ("runtime", "host") if fields.get(key)]
+        details = [result] + [
+            fields[key] for key in ("runtime", "host") if fields.get(key)
+        ]
         lines = [" · ".join(details)]
         if fields.get("finished_at"):
             lines.append("Finished: " + fields["finished_at"])
@@ -279,7 +289,25 @@ def telegram_safe_message(title: str, message: str) -> str:
         summary_lines = 0
         for raw in summary.splitlines():
             line = raw.strip().lstrip("- ")
-            if not line or any(marker in line.lower() for marker in ("traceback", "command:", "[info]", "[debug]", "[error]", "qstat:", "tmux:")):
+            lowered = line.lower()
+            if (
+                not line
+                or any(
+                    marker in lowered
+                    for marker in (
+                        "traceback",
+                        "command:",
+                        "[info]",
+                        "[debug]",
+                        "[error]",
+                        "qstat:",
+                        "tmux:",
+                        "aggregated_output",
+                        "item.completed",
+                    )
+                )
+                or line.startswith(("{", "["))
+            ):
                 continue
             lines.append(line[:220])
             summary_lines += 1
@@ -304,14 +332,32 @@ def telegram_safe_message(title: str, message: str) -> str:
         safe_prefix = []
         for raw_line in before_summary.splitlines():
             lowered = raw_line.lower()
-            if any(marker in lowered for marker in ("command:", "last log lines:", "qstat:", "tmux:", "scratch filesystem")):
+            if any(
+                marker in lowered
+                for marker in (
+                    "command:",
+                    "last log lines:",
+                    "qstat:",
+                    "tmux:",
+                    "scratch filesystem",
+                )
+            ):
                 continue
             if raw_line.strip():
                 safe_prefix.append(raw_line.strip())
         safe_summary = []
         for raw_line in summary.splitlines():
             lowered = raw_line.lower()
-            if any(marker in lowered for marker in ("command:", "last log lines:", "traceback", "qstat:", "tmux:")):
+            if any(
+                marker in lowered
+                for marker in (
+                    "command:",
+                    "last log lines:",
+                    "traceback",
+                    "qstat:",
+                    "tmux:",
+                )
+            ):
                 continue
             if raw_line.strip():
                 safe_summary.append(raw_line.strip())
@@ -333,7 +379,9 @@ def telegram_safe_message(title: str, message: str) -> str:
     if "started" in title.lower():
         summary = "Process started. Detailed commands and logs are kept local."
     elif status == "0":
-        summary = "Process exited successfully. Detailed results are kept in the local log."
+        summary = (
+            "Process exited successfully. Detailed results are kept in the local log."
+        )
     elif status:
         summary = "Process reported an error. Inspect the local log for the cause."
     else:
@@ -347,7 +395,9 @@ def telegram_safe_message(title: str, message: str) -> str:
     return summary
 
 
-def send_email(env: dict[str, str], title: str, message: str, timeout: int) -> NotifyResult:
+def send_email(
+    env: dict[str, str], title: str, message: str, timeout: int
+) -> NotifyResult:
     host = env_value(env, "TELEAGENT_SMTP_HOST", "SMTP_HOST")
     port = int(env_value(env, "TELEAGENT_SMTP_PORT", "SMTP_PORT") or "587")
     sender = env_value(env, "TELEAGENT_SMTP_FROM", "SMTP_FROM")
@@ -365,7 +415,9 @@ def send_email(env: dict[str, str], title: str, message: str, timeout: int) -> N
 
     try:
         if bool_env(env, "TELEAGENT_SMTP_SSL", False):
-            with smtplib.SMTP_SSL(host, port, timeout=timeout, context=tls_context()) as smtp:
+            with smtplib.SMTP_SSL(
+                host, port, timeout=timeout, context=tls_context()
+            ) as smtp:
                 if user or password:
                     smtp.login(user, password)
                 smtp.send_message(msg)
@@ -382,7 +434,9 @@ def send_email(env: dict[str, str], title: str, message: str, timeout: int) -> N
 
 
 def append_jsonl(repo_root: Path, env: dict[str, str], record: dict[str, Any]) -> None:
-    rel = env.get("TELEAGENT_NOTIFY_LOG_JSONL", "logs/readable/notifications.jsonl").strip()
+    rel = env.get(
+        "TELEAGENT_NOTIFY_LOG_JSONL", "logs/readable/notifications.jsonl"
+    ).strip()
     path = Path(rel)
     if not path.is_absolute():
         path = repo_root / path
@@ -404,7 +458,9 @@ def build_message(args: argparse.Namespace, env: dict[str, str]) -> str:
         pieces.append(path.read_text(encoding="utf-8"))
     if args.include_tmux:
         session = args.tmux_session or env.get("TELEAGENT_TMUX_SESSION", "tele-agent")
-        pane = run_short(["tmux", "capture-pane", "-pt", f"{session}:0", "-S", f"-{args.tmux_lines}"])
+        pane = run_short(
+            ["tmux", "capture-pane", "-pt", f"{session}:0", "-S", f"-{args.tmux_lines}"]
+        )
         pieces.append(f"tmux:{session} tail:\n" + (pane or "(no tmux output)"))
     if args.include_df:
         scratch = env.get(
@@ -443,23 +499,37 @@ def max_upload_bytes(env: dict[str, str]) -> int:
     return int(value * 1024 * 1024)
 
 
-def prepare_attachment(args: argparse.Namespace, env: dict[str, str]) -> Attachment | None:
+def prepare_attachment(
+    args: argparse.Namespace, env: dict[str, str]
+) -> Attachment | None:
     if not args.image and not args.file:
         return None
 
     if args.image:
-        if not (args.allow_images or bool_env(env, "TELEAGENT_NOTIFY_ALLOW_IMAGES", False)):
-            raise SystemExit("Image upload disabled. Re-run with --allow-images for this explicit send.")
+        if not (
+            args.allow_images or bool_env(env, "TELEAGENT_NOTIFY_ALLOW_IMAGES", False)
+        ):
+            raise SystemExit(
+                "Image upload disabled. Re-run with --allow-images for this explicit send."
+            )
         path = resolve_local_path(args.image)
         mime_type = mimetypes.guess_type(path.name)[0] or ""
         if not mime_type.startswith("image/"):
             raise SystemExit(f"--image path does not look like an image: {path}")
-        attachment = Attachment(path=path, kind="image", method="sendPhoto", field_name="photo")
+        attachment = Attachment(
+            path=path, kind="image", method="sendPhoto", field_name="photo"
+        )
     else:
-        if not (args.allow_files or bool_env(env, "TELEAGENT_NOTIFY_ALLOW_FILES", False)):
-            raise SystemExit("File upload disabled. Re-run with --allow-files for this explicit send.")
+        if not (
+            args.allow_files or bool_env(env, "TELEAGENT_NOTIFY_ALLOW_FILES", False)
+        ):
+            raise SystemExit(
+                "File upload disabled. Re-run with --allow-files for this explicit send."
+            )
         path = resolve_local_path(args.file)
-        attachment = Attachment(path=path, kind="file", method="sendDocument", field_name="document")
+        attachment = Attachment(
+            path=path, kind="file", method="sendDocument", field_name="document"
+        )
 
     max_bytes = max_upload_bytes(env)
     size = attachment.path.stat().st_size
@@ -482,18 +552,33 @@ def main() -> int:
     parser.add_argument("--message", default="")
     parser.add_argument("--message-file")
     attachment_group = parser.add_mutually_exclusive_group()
-    attachment_group.add_argument("--image", type=Path, help="send an image through Telegram")
-    attachment_group.add_argument("--file", type=Path, help="send a file through Telegram")
-    parser.add_argument("--allow-images", action="store_true", help="explicitly allow this image upload")
-    parser.add_argument("--allow-files", action="store_true", help="explicitly allow this file upload")
-    parser.add_argument("--level", default="info", choices=["info", "success", "warning", "error"])
+    attachment_group.add_argument(
+        "--image", type=Path, help="send an image through Telegram"
+    )
+    attachment_group.add_argument(
+        "--file", type=Path, help="send a file through Telegram"
+    )
+    parser.add_argument(
+        "--allow-images", action="store_true", help="explicitly allow this image upload"
+    )
+    parser.add_argument(
+        "--allow-files", action="store_true", help="explicitly allow this file upload"
+    )
+    parser.add_argument(
+        "--level", default="info", choices=["info", "success", "warning", "error"]
+    )
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
-        "--enqueue", action="store_true",
+        "--enqueue",
+        action="store_true",
         help="save a private Telegram notice for the listener to deliver and retry",
     )
     parser.add_argument("--prefer", choices=["telegram", "email"], default="telegram")
-    parser.add_argument("--send-all", action="store_true", help="send to all configured providers instead of first-success fallback")
+    parser.add_argument(
+        "--send-all",
+        action="store_true",
+        help="send to all configured providers instead of first-success fallback",
+    )
     parser.add_argument("--timeout", type=int, default=15)
     parser.add_argument("--include-tmux", action="store_true")
     parser.add_argument("--tmux-session", default="")
@@ -510,7 +595,9 @@ def main() -> int:
     if args.enqueue and (attachment or args.send_all or args.prefer != "telegram"):
         parser.error("--enqueue supports Telegram text only")
 
-    providers = ["telegram", "email"] if args.prefer == "telegram" else ["email", "telegram"]
+    providers = (
+        ["telegram", "email"] if args.prefer == "telegram" else ["email", "telegram"]
+    )
     configured = {
         "telegram": telegram_configured(env),
         "email": email_configured(env),
@@ -539,18 +626,27 @@ def main() -> int:
             raise SystemExit(
                 "Queued notifications require a configured private Telegram destination."
             )
-        scratch = Path(env.get("TELEAGENT_SCRATCH") or Path.home() / ".local/share/tele-agent")
+        scratch = Path(
+            env.get("TELEAGENT_SCRATCH") or Path.home() / ".local/share/tele-agent"
+        )
         runtime = Path(env.get("TELEAGENT_LOG_DIR") or scratch / "runtime")
         queue_args = argparse.Namespace(
-            control_reply_state_path=str(runtime / "telegram_control_replies.state.json")
+            control_reply_state_path=str(
+                runtime / "telegram_control_replies.state.json"
+            )
         )
         replies.send(
-            queue_args, token, destination,
+            queue_args,
+            token,
+            destination,
             redact(title, env) + "\n\n" + telegram_safe_message(title, message),
         )
         record = {
-            "ts": int(time.time()), "dry_run": False, "title": title,
-            "level": args.level, "queued": True,
+            "ts": int(time.time()),
+            "dry_run": False,
+            "title": title,
+            "level": args.level,
+            "queued": True,
         }
         append_jsonl(repo_root, env, record)
         print(json.dumps(record, sort_keys=True))
@@ -562,7 +658,9 @@ def main() -> int:
             result = send_telegram(env, title, message, args.timeout, attachment)
         else:
             if attachment:
-                result = NotifyResult("email", False, "attachments are only sent through Telegram")
+                result = NotifyResult(
+                    "email", False, "attachments are only sent through Telegram"
+                )
             else:
                 result = send_email(env, title, message, args.timeout)
         results.append(result)
