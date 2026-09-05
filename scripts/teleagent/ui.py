@@ -7,6 +7,7 @@ from pathlib import Path
 from notify import redact
 
 from . import replies
+from . import queue_history
 from . import messages, routing, state, status, transport
 
 QUICK_COMMANDS = {"/start", "/help", "/ping", "/status", "/queue", "/cancel", "/models"}
@@ -37,7 +38,7 @@ def help_text() -> str:
         "Send a task as text, code, a document, photo or voice note.\n"
         "One bot = one agent and one conversation.\n\n"
         "/status — working, idle, stopped or recovering\n"
-        "/queue — waiting messages and delivery failures\n"
+        "/queue — current waiting work; History shows past delivery checks\n"
         "/cancel ID — remove a waiting message\n"
         "/interrupt NEW TASK — stop this turn and submit NEW TASK\n"
         "/models — model choices; /reasoning LEVEL changes effort\n"
@@ -80,7 +81,9 @@ def visible_task(
     )
 
 
-def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
+def queue_text(
+    args, chat_id: str, is_group: bool, topic_id: int | None, *, history=False
+) -> str:
     data = state.read_json_object(Path(args.relay_queue_state_path))
     visible = lambda item: visible_task(item, chat_id, is_group, topic_id)
     tasks = [item for item in data.get("tasks", []) if visible(item)]
@@ -106,19 +109,21 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
                 else {}
             )
             converted = {
+                **item,
+                "_receipt_check": True,
                 "update": {
                     "message": {
                         "message_id": item.get("message_id"),
                         "chat": {"id": (route or {}).get("chat_id")},
                         "message_thread_id": (route or {}).get("message_thread_id"),
                     }
-                }
+                },
             }
             if visible(converted):
                 (unconfirmed if phase == "pending" else failures).append(converted)
-    lines = [
-        f"Waiting: {len(tasks)} · incoming: {len(pending)} · failed: {len(failures)}"
-    ]
+    if history:
+        return queue_history.format_history(failures, is_group)
+    lines = [f"Waiting: {len(tasks)} · incoming: {len(pending)}"]
     for task in tasks[:8]:
         message = task_message(task)
         text = " ".join(
@@ -132,20 +137,6 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
         lines.append(
             f"Unconfirmed: {len(unconfirmed)} submitted message(s). Check before resending."
         )
-    for task in failures[-3:]:
-        message = task_message(task)
-        detail = str(
-            task.get("error")
-            or task.get("last_error")
-            or task.get("stalled_reason")
-            or "delivery outcome unconfirmed"
-        )
-        if is_group:
-            detail = "delivery outcome unconfirmed; check /status before resending"
-        detail = " ".join(detail.split())[:180]
-        lines.append(
-            f"Failed/unconfirmed message {message.get('message_id', '?')}: {detail}"
-        )
     if tasks:
         lines.append(
             "/cancel ID removes a waiting message; /cancel all removes this visible queue."
@@ -155,6 +146,10 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
             "No messages waiting for the agent in this chat."
             if is_group
             else "No messages waiting for the agent."
+        )
+    if failures:
+        lines.append(
+            f"History: {len(failures)} archived delivery check(s). Tap History or use /queue history for dates and receipts."
         )
     return "\n".join(lines)
 
@@ -204,11 +199,15 @@ def handle_quick_update(
     callback = update.get("callback_query")
     if isinstance(callback, dict):
         action = str(callback.get("data") or "")
-        if action not in {"relay:status", "relay:queue", "relay:help"}:
+        if action not in {"relay:status", "relay:queue", "relay:history", "relay:help"}:
             return True
         message = dict(callback.get("message") or {})
         message["from"] = callback.get("from") or {}
-        message["text"] = "/" + action.split(":")[1] + "@" + bot_username
+        message["text"] = (
+            "/queue@" + bot_username + " history"
+            if action == "relay:history"
+            else "/" + action.split(":")[1] + "@" + bot_username
+        )
         message.pop("entities", None)
         update = {"update_id": update.get("update_id"), "message": message}
     else:
@@ -255,7 +254,17 @@ def handle_quick_update(
             audience_chat_id=chat_id if is_group else None,
         )
     elif command == "/queue":
-        reply = queue_text(args, chat_id, is_group, topic)
+        reply = (
+            queue_text(
+                args,
+                chat_id,
+                is_group,
+                topic,
+                history=payload.strip().casefold() == "history",
+            )
+            if payload.strip().casefold() in {"", "history"}
+            else "Use /queue for waiting work or /queue history for archived delivery checks."
+        )
     elif command == "/cancel":
         reply = (
             cancel_queued(args, payload, chat_id, is_group, topic)
@@ -274,7 +283,17 @@ def handle_quick_update(
         chat_id,
         redact(reply, env or {}),
         message_thread_id=topic,
-        reply_markup=BUTTONS
+        reply_markup={
+            "inline_keyboard": [
+                [
+                    {"text": "Queue", "callback_data": "relay:queue"},
+                    {"text": "History", "callback_data": "relay:history"},
+                    {"text": "Help", "callback_data": "relay:help"},
+                ]
+            ]
+        }
+        if command == "/queue"
+        else BUTTONS
         if command in {"/status", "/help", "/start", "/queue"}
         else None,
     )
