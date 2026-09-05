@@ -54,8 +54,12 @@ if [[ "$CODEX_MODEL" == deepseek-v4-flash || "$CODEX_MODEL" == deepseek-v4-pro ]
   AGENT_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
   "$SCRIPT_DIR/prepare_telegram_ds_codex_home.sh" >/dev/null
 else
-  AGENT_CODEX_HOME="$TELEAGENT_CODEX_HOME"
-  if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
+  if [[ "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
+    AGENT_CODEX_HOME="$TELEAGENT_CHAT_ONLY_CODEX_HOME"
+  else
+    AGENT_CODEX_HOME="$TELEAGENT_CODEX_HOME"
+  fi
+  if [[ "$TELEAGENT_INSTANCE" != "main" || "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
     "$SCRIPT_DIR/prepare_telegram_codex_home.sh" >/dev/null
   fi
 fi
@@ -65,6 +69,16 @@ TMUX_SHELL_COMMAND="$(tele_agent_tmux_bash_shell_command)"
 if ! tmux has-session -t "$SESSION" 2>/dev/null; then
   "$SCRIPT_DIR/start_tmux.sh" "$SESSION" >/dev/null
 fi
+
+# Serialize the full replace-and-register transaction with the listener's
+# in-process recovery watchdog. Acquire this only after ensuring the tmux
+# server exists so a newly created server cannot inherit and retain the lock.
+mkdir -p "$TELEAGENT_LOG_DIR"
+chmod 700 "$TELEAGENT_LOG_DIR"
+AGENT_LIFECYCLE_LOCK="$TELEAGENT_LOG_DIR/telegram_agent_lifecycle.lock"
+exec 8>"$AGENT_LIFECYCLE_LOCK"
+chmod 600 "$AGENT_LIFECYCLE_LOCK"
+flock -x 8
 
 if tmux list-windows -t "$SESSION" -F '#{window_name}' | grep -Fx "$WINDOW" >/dev/null; then
   if [[ "$RESTART" -eq 1 ]]; then
@@ -141,6 +155,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
   CODEX_COMMAND="cd $repo_q && export TELEAGENT_INSTANCE=$instance_q && source scripts/relay_paths.sh && ${DS_EXTRA}$CODEX_AGENT_ENV $supervisor_q --model $codex_model_q --reasoning-effort $codex_reasoning_q"
 
   tmux send-keys -t "$TARGET_PANE" "$CODEX_COMMAND" C-m
+  AGENT_LAUNCH_HEALTHY=0
   for _ in {1..20}; do
     PANE_PID="$(tmux display-message -p -t "$TARGET_PANE" '#{pane_pid}' 2>/dev/null || true)"
     # With pipefail enabled, ps returns 1 during the short interval before the
@@ -152,6 +167,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
         || true
     )"
     if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Fx 'codex' >/dev/null; then
+      AGENT_LAUNCH_HEALTHY=1
       break
     fi
     sleep 0.5
@@ -219,7 +235,7 @@ SUPERVISOR_PID="$(
     | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
     || true
 )"
-if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Fx 'codex' >/dev/null; then
+if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Fx 'codex' >/dev/null; }; then
   echo "session=$SESSION window=$WINDOW pane=0 cmd=codex supervised=yes model=$CODEX_MODEL reasoning=$CODEX_REASONING_EFFORT"
 else
   echo "session=$SESSION window=$WINDOW pane=0 cmd=unhealthy supervised=no" >&2

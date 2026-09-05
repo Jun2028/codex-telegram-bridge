@@ -143,41 +143,13 @@ if not log_path.exists():
     print(f"- {fallback}")
     raise SystemExit
 
-text = log_path.read_text(encoding="utf-8", errors="replace")[-250_000:]
-lines = [part for line in text.splitlines() for part in line.split("\r")]
-
+# Process exit is the only result the wrapper can verify. A reviewed summary
+# file can describe experiment outcomes; arbitrary matching log lines cannot.
 if status == 0:
-    patterns = [
-        r"\bok_for_[A-Za-z0-9_]+['\"]?\s*[:=]\s*true",
-        r"\bcompleted\b|\bfinished\b|\bsucceeded\b|\bok\b",
-        r"\bvalidation images?\b|\bvalidation sheet\b",
-        r"\bLoRA files?\b|\bModel weights saved\b|\bSaved state\b",
-        r"\bcheckpoints?\b|\bresum(?:e|ed|ing)\b",
-        r"\bGate \d\b|\bblocked until\b",
-    ]
+    print("- Process exited successfully. No reviewed result summary was supplied.")
 else:
-    patterns = [
-        r"\bTraceback\b|\bRuntimeError\b|\bValueError\b|\bException\b",
-        r"\bfailed\b|\berror\b|\brefusing\b|\bblocked\b",
-        r"\bout of memory\b|\bCUDA\b|\bwalltime\b|\bkilled\b",
-    ]
+    print("- Process failed. Inspect the local log for the cause.")
 
-regexes = [re.compile(pattern, re.IGNORECASE) for pattern in patterns]
-selected = []
-for line in reversed(lines):
-    cleaned = clean(line)
-    if not cleaned or "command:" in cleaned.lower() or "last log lines" in cleaned.lower():
-        continue
-    if any(regex.search(cleaned) for regex in regexes):
-        selected.append(cleaned)
-
-if selected:
-    emit(list(reversed(selected[-8:])))
-else:
-    if status == 0:
-        print("- Completed successfully. The command did not write a concise result summary.")
-    else:
-        print("- Failed. The command did not write a concise failure summary.")
 PY
 }
 
@@ -212,6 +184,7 @@ END_MESSAGE=$(cat <<EOF
 status: $([[ "$STATUS" -eq 0 ]] && printf completed || printf failed)
 exit_status: $STATUS
 runtime: $RUNTIME
+finished_at: $(date -Iseconds)
 host: $(hostname)
 pbs_jobid: ${PBS_JOBID:-}
 pbs_queue: ${PBS_QUEUE:-}

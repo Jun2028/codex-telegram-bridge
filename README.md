@@ -1,87 +1,115 @@
 # Codex Telegram Bridge
 
-Run a Codex coding agent from a private Telegram chat. Telegram text,
-documents, and voice notes are relayed to a supervised Codex TUI in tmux, and
-agent replies are sent back automatically.
+Control a coding agent on your machine from Telegram. Send a task, follow its
+progress, inspect waiting work, change models, and retrieve results from your
+phone. Text, code, PDF/TXT/MD/HTML documents, photos and local voice transcription
+are supported.
 
-## What you need
+**One bot = one persistent agent and one conversation.** Private chats, groups
+and forum topics use that agent. Each turn keeps the chat and topic that started
+it; a message from another chat waits instead of redirecting the reply.
 
-- A Linux x86_64 or arm64 machine with internet access.
-- One DeepSeek API key (or another Codex-compatible provider).
-- One Telegram bot token from [BotFather](https://t.me/BotFather).
+## Use it from your phone
 
-No OpenAI account, Telegram chat ID, Node.js installation, or hand-written
-Codex configuration is required for the default setup.
+Send ordinary instructions:
 
-## How model providers are connected
+> In ~/project, reproduce the failing test, fix it, and show me the diff.
 
-The Telegram listener does not call a model API itself. It controls the Codex
-CLI, and Codex calls the configured provider. The included DeepSeek profile
-sets a provider URL, reads `DEEPSEEK_API_KEY`, and uses the OpenAI Responses
-wire protocol. A different backend can be configured the same way when it
-implements a compatible Responses endpoint; an arbitrary incompatible API
-needs an adapter. See the
-[Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference)
-for provider fields.
+> Run the experiment in tmux, save the results, and report when it finishes.
 
-## Quick start
+> Compare the last two runs and send the reviewed report.md.
 
-1. Create a Telegram bot with BotFather.
-2. Open the new bot in Telegram and send it `/start`.
-3. Clone or unzip this source, then run:
+The agent runs on the host with the access configured for this bot. Reach other
+machines through the host's existing SSH or scheduler setup. Nothing needs a
+new Telegram-specific command just to become a task.
 
-   ```bash
-   scripts/bootstrap_new_machine.sh
-   ```
+| Telegram action | What happens |
+| --- | --- |
+| `/status` | Shows working/idle/stopped/recovering, effective model, queue counts and reply-check age. Tap Refresh to check again. |
+| `/queue` | Shows waiting messages, incoming controls and failed deliveries. |
+| `/cancel ID` | Removes a waiting message. `/cancel all` removes the queue visible here. |
+| `/interrupt NEW TASK` | Aborts the managed turn, verifies it stopped, then submits the replacement instruction. |
+| `/models` | Lists model names and example commands. |
+| `/model astra xhigh` | Selects GPT-6 Astra and effort. Changes within a Codex home preserve the conversation. |
+| `/reasoning high` | Changes effort in the current conversation. |
+| `/kill_agent` | Stops the agent persistently; Telegram controls stay online. |
+| `/start_agent [MODEL] [LEVEL]` | Starts a stopped agent. |
+| `/restart_agent [MODEL] [LEVEL]` | Replaces a running agent with a fresh conversation. |
+| `/timed 0.5 check the experiment` | Schedules a task in half an hour. Use `/timed list` or `/timed remove N`. |
+| `/recent_messages`, `/replay_last` | Inspects or resubmits requests from this chat. |
+| `/reauth`, `/codex_usage` | Handles sign-in and account usage in private. |
+| `/help` | Opens the compact command guide. |
 
-4. Paste the DeepSeek API key and Telegram bot token when prompted. Both inputs
-   are hidden. If the bot can see more than one chat, select the intended chat.
-5. Send `/ping`, then send a normal task to the bot.
+Lifecycle commands take model/effort options, never task text. Send the task in
+a separate message. Changing between provider homes starts a fresh conversation.
 
-The bootstrap checks or installs the Linux prerequisites and a compatible Codex CLI,
-discovers the Telegram chat ID, stores both secrets with mode `0600`, configures
-`deepseek-v4-flash` at `max` reasoning, starts the supervised agent and inbox,
-and installs a crontab watchdog when crontab is available.
+## Groups and private messages
 
-## Agent personality
+Add the bot to a group and configure `TELEAGENT_OWNER_USER_ID` and
+`TELEAGENT_BOT_USERNAME` in its secret configuration. Address the exact bot
+username, use `/status@YourBot`, or reply to a message from that bot. Captions
+and forum topics work too. Other bots with similar names are ignored.
 
-The tracked `config/personality.default.md` is deliberately neutral. Each host
-can define its own identity in the ignored `config/personality.md` file (or a
-per-instance `config/personality-<instance>.md`). Personality never affects
-relay behavior or safety rules.
+The owner can use agent controls in a group. Other members can submit addressed
+requests when the configured owner is confirmed as a group member; lifecycle,
+model and queue mutation controls remain owner-only. Telegram may require the
+bot to be a group administrator for reliable membership checks.
 
-## Secret storage
+A same-chat message can steer an ordinary active turn. Other chats wait in the
+single FIFO. Goal-mode work is never automatically interrupted to make room.
+Group replies are concise finals; account recovery and unscoped machine notices
+go privately. Group status and replay do not expose private message history.
+If inputs from different chats nevertheless enter one turn, remaining output
+is redirected to the owner's private chat.
 
-- DeepSeek: `~/.config/tele-agent/deepseek.env`
-- Telegram: `.secrets/notify.env`
+This is destination isolation within a shared agent. The agent retains one
+conversation's context across chats; separate bot instances provide separate
+agent histories when that is needed.
 
-Both paths are excluded from Git. The source archive contains neither file.
+## Install on a new machine
 
-## Operation
+The guided bootstrap supports Linux x86_64 and arm64. Have a Telegram bot token
+from [BotFather](https://t.me/BotFather) and a DeepSeek API key ready.
 
-Useful Telegram commands include `/status`, `/agent_status`, `/restart_agent`,
-`/kill_agent`, `/start_agent`, `/interrupt PROMPT`, `/model`, `/reasoning`,
-`/timed`, and `/help`.
-The listener only accepts the Telegram chat selected during setup.
+1. Open your bot in Telegram and send `/start`.
+2. Clone this repository and run `scripts/bootstrap_new_machine.sh`.
+3. Enter the hidden credentials and choose the intended private chat.
+4. Send `/ping`, then a normal task.
 
-See [docs/telegram_codex_agent.md](docs/telegram_codex_agent.md) for lifecycle
-and relay behavior, and [docs/notifications.md](docs/notifications.md) for file
-delivery and notification behavior.
+The bootstrap checks prerequisites, installs a compatible standalone Codex CLI,
+configures DeepSeek V4 Flash, starts the supervised agent/listener and installs
+a crontab watchdog when available. It does not require Node.js. For an existing
+OpenAI-authenticated Codex installation, follow the [operator setup](docs/telegram_codex_agent.md).
 
-## Verification
+The listener controls Codex; Codex connects to the model provider. Available
+models depend on that installation and account. The included aliases are Astra,
+Sol, Luna, Spark, DeepSeek Flash and DeepSeek Pro.
 
-Run the local suite with:
+## Private host configuration
+
+Copy `config/relay.env.template` to ignored `config/relay.env` for local options.
+Each additional bot uses `TELEAGENT_INSTANCE=name`, its own secret file, runtime
+directory, Codex home and tmux session. See [instance setup](docs/telegram_codex_agent.md).
+
+Telegram credentials live in `.secrets/notify.env` (or the instance-specific
+secret file); bootstrap stores DeepSeek credentials in
+`~/.config/tele-agent/deepseek.env`. These are private mode-0600 files. Local
+personalities belong in ignored `config/personality.md` or
+`config/personality-<instance>.md`; the tracked default is neutral.
+
+## Development and deployment
 
 ```bash
-python3 -m unittest discover -s tests -v
-bash -n scripts/*.sh
+scripts/check.sh
+# After reviewing and committing the changes:
+scripts/deploy_listener.sh
 ```
 
-## Manual configuration
+The check script uses an isolated tmux server. Deployment restarts only this
+instance's listener and verifies that the Codex pane identity stays unchanged.
+Queues, reply offsets, credentials and the agent conversation are retained.
 
-Advanced deployments can copy `config/relay.env.template` to
-`config/relay.env` and override `TELEAGENT_*` values.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
+See [architecture and recovery](docs/architecture.md),
+[operator controls](docs/telegram_codex_agent.md),
+[notifications and files](docs/notifications.md), and
+[tmux test safety](docs/tmux_safety.md). MIT licensed; see [LICENSE](LICENSE).

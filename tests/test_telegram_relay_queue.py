@@ -13,10 +13,19 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import telegram_inbox  # noqa: E402
+from teleagent import commands as _relay_commands
+from teleagent import processes as _relay_processes
+from teleagent import queue as _relay_queue
+from teleagent import sessions as _relay_sessions
+from teleagent import submission as _relay_submission
+from teleagent import transport as _relay_transport
 
 
 class TelegramRelayQueueTests(unittest.TestCase):
     def setUp(self) -> None:
+        sender = mock.patch.object(_relay_transport, "send_reply")
+        sender.start()
+        self.addCleanup(sender.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -30,6 +39,9 @@ class TelegramRelayQueueTests(unittest.TestCase):
             relay_queue_state_path=str(self.queue_state),
             relay_confirmation_state_path=str(self.confirmation_state),
         )
+        tmux_tail = mock.patch.object(_relay_processes, "tmux_tail", return_value="")
+        tmux_tail.start()
+        self.addCleanup(tmux_tail.stop)
 
     @staticmethod
     def update(message_id: int, text: str) -> dict:
@@ -107,12 +119,91 @@ class TelegramRelayQueueTests(unittest.TestCase):
 
         self.assertFalse(telegram_inbox.codex_session_turn_active(self.session))
 
+    def test_checkpoint_prefers_process_rollout_over_recent_marker(self) -> None:
+        old_session = self.root / "old-rollout.jsonl"
+        old_session.write_text("old\n", encoding="utf-8")
+        self.session.write_text("current\n", encoding="utf-8")
+        initial = {
+            "agent_id": "agent-test",
+            "codex_home": str(self.root),
+            "codex_session_path": str(old_session),
+        }
+        refreshed = {**initial, "codex_session_path": str(self.session)}
+
+        with (
+            mock.patch.object(
+                telegram_inbox.agent_registry,
+                "active_agent_for_pane",
+                return_value=initial,
+            ),
+            mock.patch.object(
+                telegram_inbox.agent_registry,
+                "refresh_codex_session_link",
+                return_value=refreshed,
+            ),
+            mock.patch.object(
+                telegram_inbox.agent_registry,
+                "codex_session_with_latest_user_message",
+                return_value=(old_session, "user_marker"),
+            ) as marker_search,
+            mock.patch.object(
+                _relay_sessions,
+                "valid_codex_session_for_agent",
+                return_value=True,
+            ),
+        ):
+            checkpoint = telegram_inbox.codex_session_checkpoint(
+                self.args.target_pane
+            )
+
+        self.assertEqual(checkpoint, (self.session, self.session.stat().st_size))
+        marker_search.assert_not_called()
+
+    def test_voice_update_is_an_agent_message(self) -> None:
+        update = self.update(9, "")
+        update["message"].pop("text")
+        update["message"]["voice"] = {
+            "file_id": "voice-file",
+            "duration": 3,
+        }
+
+        self.assertTrue(telegram_inbox.telegram_update_is_agent_message(update))
+
+    def test_voice_update_is_queued_behind_pending_confirmation(self) -> None:
+        self.seed_pending()
+        update = self.update(10, "")
+        update["message"].pop("text")
+        update["message"]["voice"] = {
+            "file_id": "voice-file",
+            "duration": 3,
+        }
+
+        with mock.patch.object(_relay_commands, "handle_update") as handle:
+            result = telegram_inbox.dispatch_telegram_update(
+                update, self.args, {}, "token", "123", self.log_path
+            )
+
+        self.assertEqual(result, "queued")
+        handle.assert_not_called()
+        tasks = telegram_inbox.telegram_relay_queue_tasks(self.queue_state)
+        self.assertEqual([task["message_id"] for task in tasks], [10])
+
+    def test_tui_idle_recognizes_ready_composer(self) -> None:
+        pane = "error from an interrupted turn\n\n› Ask Codex to do anything\n\n  esc again"
+        with mock.patch.object(_relay_processes, "tmux_tail", return_value=pane):
+            self.assertTrue(telegram_inbox.codex_tui_idle(self.args.target_pane))
+
+    def test_tui_idle_rejects_active_goal(self) -> None:
+        pane = "Goal active\n\n› Ask Codex to do anything"
+        with mock.patch.object(_relay_processes, "tmux_tail", return_value=pane):
+            self.assertFalse(telegram_inbox.codex_tui_idle(self.args.target_pane))
+
     def test_consecutive_messages_are_persisted_in_fifo_order(self) -> None:
         self.seed_pending()
         first = self.update(11, "second message")
         second = self.update(12, "third message")
 
-        with mock.patch.object(telegram_inbox, "handle_update") as handle:
+        with mock.patch.object(_relay_commands, "handle_update") as handle:
             self.assertEqual(
                 telegram_inbox.dispatch_telegram_update(
                     first, self.args, {}, "token", "123", self.log_path
@@ -139,7 +230,7 @@ class TelegramRelayQueueTests(unittest.TestCase):
         update = self.update(13, "must not be persisted")
         update["message"]["chat"]["id"] = "999"
 
-        with mock.patch.object(telegram_inbox, "handle_update") as handle:
+        with mock.patch.object(_relay_commands, "handle_update") as handle:
             result = telegram_inbox.dispatch_telegram_update(
                 update, self.args, {}, "token", "123", self.log_path
             )
@@ -154,14 +245,14 @@ class TelegramRelayQueueTests(unittest.TestCase):
         update = self.update(14, "wait behind active turn")
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "codex_session_checkpoint",
                 return_value=(self.session, 0),
             ),
             mock.patch.object(
-                telegram_inbox, "codex_session_turn_active", return_value=True
+                _relay_submission, "codex_session_turn_active", return_value=True
             ),
-            mock.patch.object(telegram_inbox, "handle_update") as handle,
+            mock.patch.object(_relay_commands, "handle_update") as handle,
         ):
             result = telegram_inbox.dispatch_telegram_update(
                 update, self.args, {}, "token", "123", self.log_path
@@ -195,10 +286,10 @@ class TelegramRelayQueueTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox, "codex_session_checkpoint", return_value=None
+                _relay_submission, "codex_session_checkpoint", return_value=None
             ),
             mock.patch.object(
-                telegram_inbox, "handle_update", side_effect=fake_handle
+                _relay_commands, "handle_update", side_effect=fake_handle
             ),
         ):
             first = telegram_inbox.drain_telegram_relay_queue(
@@ -231,14 +322,14 @@ class TelegramRelayQueueTests(unittest.TestCase):
         )
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "codex_session_checkpoint",
                 return_value=(self.session, 0),
             ),
             mock.patch.object(
-                telegram_inbox, "codex_session_turn_active", return_value=True
+                _relay_submission, "codex_session_turn_active", return_value=True
             ),
-            mock.patch.object(telegram_inbox, "handle_update") as handle,
+            mock.patch.object(_relay_commands, "handle_update") as handle,
         ):
             delivered = telegram_inbox.drain_telegram_relay_queue(
                 self.args, {}, "token", "123", self.log_path
@@ -255,6 +346,173 @@ class TelegramRelayQueueTests(unittest.TestCase):
             ],
             [31],
         )
+
+    def test_active_rollout_cannot_be_overridden_by_an_idle_tui_label(self) -> None:
+        telegram_inbox.enqueue_telegram_relay(
+            self.queue_state,
+            self.update(32, "recover after an interrupted turn"),
+            self.args.target_pane,
+        )
+        with (
+            mock.patch.object(
+                _relay_submission,
+                "codex_session_checkpoint",
+                return_value=(self.session, 0),
+            ),
+            mock.patch.object(
+                _relay_submission, "codex_session_turn_active", return_value=True
+            ),
+            mock.patch.object(
+                _relay_processes, "codex_tui_idle", return_value=True
+            ),
+            mock.patch.object(_relay_commands, "handle_update") as handle,
+        ):
+            delivered = telegram_inbox.drain_telegram_relay_queue(
+                self.args, {}, "token", "123", self.log_path
+            )
+
+        handle.assert_not_called()
+        self.assertEqual(len(delivered), 0)
+        self.assertEqual(len(telegram_inbox.telegram_relay_queue_tasks(self.queue_state)), 1)
+
+
+
+    def test_preexisting_blocked_head_is_migrated_before_following_message(self) -> None:
+        for message_id in (33, 34):
+            telegram_inbox.enqueue_telegram_relay(
+                self.queue_state,
+                self.update(message_id, f"message {message_id}"),
+                self.args.target_pane,
+            )
+        state = telegram_inbox.read_json_object(self.queue_state)
+        state["tasks"][0].update(
+            {"status": "blocked", "last_error": "old goal-pause failure"}
+        )
+        telegram_inbox.write_json_object(self.queue_state, state)
+
+        with mock.patch.object(_relay_submission, "codex_session_checkpoint", return_value=None):
+            events = telegram_inbox.drain_telegram_relay_queue(
+                self.args, {}, "token", "123", self.log_path
+            )
+
+        self.assertEqual(events[0]["event"], "telegram_relay_queue_blocked_quarantined")
+        self.assertEqual(
+            [
+                task["message_id"]
+                for task in telegram_inbox.telegram_relay_queue_tasks(
+                    self.queue_state
+                )
+            ],
+            [34],
+        )
+        state = telegram_inbox.read_json_object(self.queue_state)
+        self.assertEqual([item["message_id"] for item in state["failed"]], [33])
+
+    def test_stale_missing_confirmation_does_not_starve_queue(self) -> None:
+        telegram_inbox.enqueue_telegram_relay(
+            self.queue_state,
+            self.update(37, "deliver after lost confirmation"),
+            self.args.target_pane,
+            now=101.0,
+        )
+        telegram_inbox.write_json_object(
+            self.confirmation_state,
+            {
+                "pending": [
+                    {
+                        "created_ts": 100.0,
+                        "marker": "[TELEGRAM USER MESSAGE message_id=36",
+                        "message_id": 36,
+                        "offset": 0,
+                        "session_path": str(self.session),
+                        "target_pane": self.args.target_pane,
+                    }
+                ],
+                "version": 1,
+            },
+        )
+
+        with (
+            mock.patch.object(telegram_inbox.time, "time", return_value=250.0),
+            mock.patch.object(
+                telegram_inbox.agent_registry,
+                "active_agent_for_pane",
+                return_value=None,
+            ),
+            mock.patch.object(
+                _relay_submission,
+                "codex_session_checkpoint",
+                return_value=None,
+            ),
+            mock.patch.object(
+                _relay_commands,
+                "handle_update",
+                return_value={
+                    "relay_result": "relayed to tele-agent:codex.0 (submission confirmed)"
+                },
+            ) as handle,
+        ):
+            events = telegram_inbox.drain_telegram_relay_queue(
+                self.args, {}, "token", "123", self.log_path
+            )
+
+        handle.assert_called_once()
+        self.assertEqual(events[0]["event"], "telegram_relay_queue_delivered")
+        self.assertEqual(
+            telegram_inbox.telegram_relay_queue_tasks(self.queue_state), []
+        )
+        confirmation = telegram_inbox.read_json_object(self.confirmation_state)
+        self.assertEqual(confirmation["pending"], [])
+        self.assertEqual(
+            [item["message_id"] for item in confirmation["failed"]], [36]
+        )
+        log_events = [
+            json.loads(line)
+            for line in self.log_path.read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(
+            [event["event"] for event in log_events],
+            [
+                "telegram_relay_stale_pending_cleared",
+                "telegram_relay_queue_delivered",
+            ],
+        )
+
+    def test_long_normal_turn_never_uses_goal_pause(self) -> None:
+        telegram_inbox.enqueue_telegram_relay(
+            self.queue_state,
+            self.update(35, "wait for the normal turn"),
+            self.args.target_pane,
+            now=100.0,
+        )
+        with (
+            mock.patch.object(telegram_inbox.time, "time", return_value=200.0),
+            mock.patch.object(
+                _relay_submission,
+                "codex_session_checkpoint",
+                return_value=(self.session, 0),
+            ),
+            mock.patch.object(
+                _relay_submission, "codex_session_turn_active", return_value=True
+            ),
+            mock.patch.object(
+                _relay_processes, "codex_goal_active", return_value=False
+            ),
+            mock.patch.object(
+                _relay_processes, "tmux_send_keys"
+            ) as deliver,
+        ):
+            self.assertEqual(
+                telegram_inbox.drain_telegram_relay_queue(
+                    self.args, {}, "token", "123", self.log_path
+                ),
+                [],
+            )
+
+        deliver.assert_not_called()
+        task = telegram_inbox.telegram_relay_queue_tasks(self.queue_state)[0]
+        self.assertEqual(task["status"], "queued")
+
 
     def test_queue_recovers_a_delivery_confirmed_before_listener_restart(self) -> None:
         telegram_inbox.enqueue_telegram_relay(
@@ -288,7 +546,7 @@ class TelegramRelayQueueTests(unittest.TestCase):
         )
         telegram_inbox.write_json_object(self.queue_state, state)
 
-        with mock.patch.object(telegram_inbox, "handle_update") as handle:
+        with mock.patch.object(_relay_commands, "handle_update") as handle:
             events = telegram_inbox.drain_telegram_relay_queue(
                 self.args, {}, "token", "123", self.log_path
             )
@@ -303,21 +561,21 @@ class TelegramRelayQueueTests(unittest.TestCase):
         self.seed_pending(message_id=40)
         checkpoint = (self.session, 0)
         with (
-            mock.patch.object(telegram_inbox, "codex_target_ready", return_value=True),
+            mock.patch.object(_relay_processes, "codex_target_ready", return_value=True),
             mock.patch.object(
-                telegram_inbox, "codex_session_checkpoint", return_value=checkpoint
+                _relay_submission, "codex_session_checkpoint", return_value=checkpoint
             ),
             mock.patch.object(
-                telegram_inbox, "codex_session_turn_active", return_value=True
+                _relay_submission, "codex_session_turn_active", return_value=True
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "wait_for_codex_turn_terminal",
                 return_value="turn_aborted",
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "paste_to_tmux",
                 return_value="relayed to tele-agent:codex.0 (submission confirmed)",
             ) as paste,
@@ -349,20 +607,20 @@ class TelegramRelayQueueTests(unittest.TestCase):
     def test_interrupt_timeout_does_not_paste_or_cancel_pending_input(self) -> None:
         self.seed_pending(message_id=50)
         with (
-            mock.patch.object(telegram_inbox, "codex_target_ready", return_value=True),
+            mock.patch.object(_relay_processes, "codex_target_ready", return_value=True),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "codex_session_checkpoint",
                 return_value=(self.session, 0),
             ),
             mock.patch.object(
-                telegram_inbox, "codex_session_turn_active", return_value=True
+                _relay_submission, "codex_session_turn_active", return_value=True
             ),
             mock.patch.object(
-                telegram_inbox, "wait_for_codex_turn_terminal", return_value=None
+                _relay_submission, "wait_for_codex_turn_terminal", return_value=None
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys"),
-            mock.patch.object(telegram_inbox, "paste_to_tmux") as paste,
+            mock.patch.object(_relay_processes, "tmux_send_keys"),
+            mock.patch.object(_relay_submission, "paste_to_tmux") as paste,
         ):
             with self.assertRaisesRegex(RuntimeError, "confirm the interrupt"):
                 telegram_inbox.interrupt_codex_with_prompt(
@@ -392,7 +650,7 @@ class TelegramRelayQueueTests(unittest.TestCase):
         update = self.update(61, "/interrupt do the urgent task")
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "interrupt_codex_with_prompt",
                 return_value=(
                     "relayed to tele-agent:codex.0 (submission confirmed)",
@@ -408,7 +666,7 @@ class TelegramRelayQueueTests(unittest.TestCase):
                 "active_agent_for_pane",
                 return_value=None,
             ),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update, args, {}, "token", "123", self.log_path

@@ -38,7 +38,9 @@ if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
       TELEAGENT_AGENT_TARGET_PANE
   fi
   unset TELEAGENT_CODEX_BIN TELEAGENT_CODEX_CHECK_FOR_UPDATE_ON_STARTUP \
-    TELEAGENT_CODEX_HOME TELEAGENT_CODEX_MODEL TELEAGENT_CODEX_SOURCE_HOME \
+    TELEAGENT_CODEX_ACCESS_MODE TELEAGENT_CODEX_HOME TELEAGENT_CODEX_MODEL \
+    TELEAGENT_CODEX_SOURCE_HOME TELEAGENT_CHAT_ONLY_CODEX_HOME \
+    TELEAGENT_CHAT_ONLY_WORKDIR \
     TELEAGENT_CODEX_REASONING_EFFORT TELEAGENT_CODEX_WINDOW \
     TELEAGENT_DS_CODEX_HOME TELEAGENT_DS_KEY_FILE TELEAGENT_INBOX_TARGET \
     TELEAGENT_LOG_DIR TELEAGENT_SCRATCH TELEAGENT_SECRET_ENV \
@@ -49,6 +51,15 @@ if [[ "$TELEAGENT_INSTANCE" != "main" && -f "$TELEAGENT_REPO/config/relay-${TELE
   # shellcheck disable=SC1091
   source "$TELEAGENT_REPO/config/relay-${TELEAGENT_INSTANCE}.env"
 fi
+
+export TELEAGENT_CODEX_ACCESS_MODE="${TELEAGENT_CODEX_ACCESS_MODE:-full-access}"
+case "$TELEAGENT_CODEX_ACCESS_MODE" in
+  full-access|chat-only) ;;
+  *)
+    echo "TELEAGENT_CODEX_ACCESS_MODE must be full-access or chat-only" >&2
+    return 1 2>/dev/null || exit 1
+    ;;
+esac
 
 if [[ "$TELEAGENT_INSTANCE" == "main" ]]; then
   export TELEAGENT_TMUX_SESSION="${TELEAGENT_TMUX_SESSION:-tele-agent}"
@@ -65,17 +76,29 @@ else
   export TELEAGENT_CODEX_SOURCE_HOME="${TELEAGENT_CODEX_SOURCE_HOME:-$tele_agent_main_codex_home}"
   export TELEAGENT_CODEX_HOME="${TELEAGENT_CODEX_HOME:-$TELEAGENT_SCRATCH/codex-home}"
 
-  # Separate relay instances must never share Codex's session/state home. This
-  # is a hard launch invariant, not a convention: a bad override fails closed
-  # before either the inbox or Codex can start.
-  tele_agent_codex_home_resolved="$(realpath -m "$TELEAGENT_CODEX_HOME")"
-  tele_agent_source_home_resolved="$(realpath -m "$TELEAGENT_CODEX_SOURCE_HOME")"
-  if [[ "$tele_agent_codex_home_resolved" == "$tele_agent_source_home_resolved" ]]; then
+fi
+
+export TELEAGENT_CHAT_ONLY_CODEX_HOME="${TELEAGENT_CHAT_ONLY_CODEX_HOME:-$TELEAGENT_SCRATCH/chat-only-codex-home}"
+export TELEAGENT_CHAT_ONLY_WORKDIR="${TELEAGENT_CHAT_ONLY_WORKDIR:-$TELEAGENT_SCRATCH/chat-only-workspace}"
+
+# Full-access non-main instances need private state. Chat-only instances use a
+# separate, minimal home so switching modes never exposes a copied capability
+# configuration or an earlier full-access conversation store.
+tele_agent_source_home_resolved="$(realpath -m "$TELEAGENT_CODEX_SOURCE_HOME")"
+if [[ "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
+  tele_agent_effective_home_resolved="$(realpath -m "$TELEAGENT_CHAT_ONLY_CODEX_HOME")"
+  if [[ "$tele_agent_effective_home_resolved" == "$tele_agent_source_home_resolved" ]]; then
+    echo "chat-only mode must use a private TELEAGENT_CHAT_ONLY_CODEX_HOME" >&2
+    return 1 2>/dev/null || exit 1
+  fi
+elif [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
+  tele_agent_effective_home_resolved="$(realpath -m "$TELEAGENT_CODEX_HOME")"
+  if [[ "$tele_agent_effective_home_resolved" == "$tele_agent_source_home_resolved" ]]; then
     echo "non-main instance '$TELEAGENT_INSTANCE' must use a private TELEAGENT_CODEX_HOME" >&2
     return 1 2>/dev/null || exit 1
   fi
-  unset tele_agent_codex_home_resolved tele_agent_source_home_resolved
 fi
+unset tele_agent_effective_home_resolved tele_agent_source_home_resolved
 unset tele_agent_main_codex_home
 export TELEAGENT_AGENT_DIR="${TELEAGENT_AGENT_DIR:-$TELEAGENT_LOG_DIR/agents}"
 
@@ -165,4 +188,29 @@ tele_agent_claim_codex_home() {
     fi
   fi
   exec {owner_fd}>&-
+}
+
+tele_agent_prepare_chat_only_workspace() {
+  local requested_workspace="${1:?chat-only workspace is required}"
+  local workspace scratch
+
+  workspace="$(realpath -m "$requested_workspace")"
+  scratch="$(realpath -m "$TELEAGENT_SCRATCH")"
+  case "$workspace" in
+    "$scratch"/*) ;;
+    *)
+      echo "chat-only workspace must be inside TELEAGENT_SCRATCH" >&2
+      return 1
+      ;;
+  esac
+  if [[ -L "$requested_workspace" ]]; then
+    echo "chat-only workspace must not be a symlink: $requested_workspace" >&2
+    return 1
+  fi
+  mkdir -p "$workspace"
+  chmod 700 "$workspace"
+  if find "$workspace" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    echo "chat-only workspace must be empty: $workspace" >&2
+    return 1
+  fi
 }

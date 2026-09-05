@@ -14,6 +14,15 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import codex_device_auth  # noqa: E402
 import telegram_inbox  # noqa: E402
+import notify as _relay_notify
+from teleagent import app as _relay_app
+from teleagent import auth as _relay_auth
+from teleagent import lifecycle as _relay_lifecycle
+from teleagent import models as _relay_models
+from teleagent import processes as _relay_processes
+from teleagent import sessions as _relay_sessions
+from teleagent import submission as _relay_submission
+from teleagent import transport as _relay_transport
 
 
 class TelegramAuthRecoveryTests(unittest.TestCase):
@@ -190,16 +199,16 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             "message": {
                 "message_id": 41,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "are you there?",
             },
         }
         with (
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
-            mock.patch.object(telegram_inbox, "paste_to_tmux") as paste,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
+            mock.patch.object(_relay_submission, "paste_to_tmux") as paste,
             mock.patch.object(
-                telegram_inbox, "ensure_codex_target_for_agent_message"
+                _relay_lifecycle, "ensure_codex_target_for_agent_message"
             ) as ensure_target,
         ):
             telegram_inbox.handle_update(
@@ -233,19 +242,19 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             "message": {
                 "message_id": 43,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456},
                 "text": "/agent_status",
             },
         }
         with (
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
-            mock.patch.object(telegram_inbox, "codex_target_ready", return_value=True),
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
+            mock.patch.object(_relay_processes, "codex_target_ready", return_value=True),
             mock.patch.object(
                 telegram_inbox.agent_registry, "active_agent_for_pane", return_value=None
             ),
             mock.patch.object(
-                telegram_inbox, "codex_login_status_summary", return_value="Logged in using ChatGPT"
+                _relay_auth, "codex_login_status_summary", return_value="Logged in using ChatGPT"
             ),
         ):
             telegram_inbox.handle_update(
@@ -263,7 +272,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             "message": {
                 "message_id": 45,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456},
                 "text": "/reauth",
             },
@@ -277,9 +286,9 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
         }
         with (
             mock.patch.object(
-                telegram_inbox, "start_codex_reauth", return_value=returned
+                _relay_auth, "start_codex_reauth", return_value=returned
             ) as start,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update, self._args(), {}, "token", "123", self.log_path
@@ -356,17 +365,17 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             mock.patch.object(sys, "argv", self._main_argv()),
             mock.patch.object(telegram_inbox, "assert_safe_local_path"),
             mock.patch.object(
-                telegram_inbox,
+                _relay_notify,
                 "load_env",
                 return_value={
                     "TELEAGENT_BOT_TOKEN": "token",
                     "TELEAGENT_CHAT_ID": "123",
                 },
             ),
-            mock.patch.object(telegram_inbox, "get_updates", return_value=[]),
-            mock.patch.object(telegram_inbox, "codex_target_ready", return_value=False),
+            mock.patch.object(_relay_app, "get_updates", return_value=[]),
+            mock.patch.object(_relay_processes, "codex_target_ready", return_value=False),
             mock.patch.object(
-                telegram_inbox, "valid_codex_session_for_agent", return_value=True
+                _relay_sessions, "valid_codex_session_for_agent", return_value=True
             ),
             mock.patch.object(
                 telegram_inbox.agent_registry,
@@ -378,7 +387,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
                 "refresh_codex_session_link",
                 return_value=self.meta,
             ),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             returncode = telegram_inbox.main()
 
@@ -412,17 +421,17 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             mock.patch.object(sys, "argv", self._main_argv()),
             mock.patch.object(telegram_inbox, "assert_safe_local_path"),
             mock.patch.object(
-                telegram_inbox,
+                _relay_notify,
                 "load_env",
                 return_value={
                     "TELEAGENT_BOT_TOKEN": "token",
                     "TELEAGENT_CHAT_ID": "123",
                 },
             ),
-            mock.patch.object(telegram_inbox, "get_updates", return_value=[]),
-            mock.patch.object(telegram_inbox, "codex_target_ready", return_value=False),
+            mock.patch.object(_relay_app, "get_updates", return_value=[]),
+            mock.patch.object(_relay_processes, "codex_target_ready", return_value=False),
             mock.patch.object(
-                telegram_inbox, "valid_codex_session_for_agent", return_value=True
+                _relay_sessions, "valid_codex_session_for_agent", return_value=True
             ),
             mock.patch.object(
                 telegram_inbox.agent_registry,
@@ -435,12 +444,12 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
                 return_value=self.meta,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_models,
                 "current_codex_reasoning_effort",
                 return_value="xhigh",
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "start_codex_agent",
                 return_value=(
                     "tele-agent:codex.0",
@@ -448,7 +457,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
                     new_meta,
                 ),
             ) as start_agent,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             returncode = telegram_inbox.main()
 
@@ -490,15 +499,15 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
             mock.patch.object(sys, "argv", self._main_argv()),
             mock.patch.object(telegram_inbox, "assert_safe_local_path"),
             mock.patch.object(
-                telegram_inbox,
+                _relay_notify,
                 "load_env",
                 return_value={
                     "TELEAGENT_BOT_TOKEN": "token",
                     "TELEAGENT_CHAT_ID": "123",
                 },
             ),
-            mock.patch.object(telegram_inbox, "get_updates", return_value=[]),
-            mock.patch.object(telegram_inbox, "codex_target_ready", return_value=False),
+            mock.patch.object(_relay_app, "get_updates", return_value=[]),
+            mock.patch.object(_relay_processes, "codex_target_ready", return_value=False),
             mock.patch.object(
                 telegram_inbox.agent_registry,
                 "active_agent_for_pane",
@@ -509,8 +518,8 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
                 "refresh_codex_session_link",
                 return_value=self.meta,
             ),
-            mock.patch.object(telegram_inbox, "start_codex_agent") as start_agent,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_lifecycle, "start_codex_agent") as start_agent,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             returncode = telegram_inbox.main()
 

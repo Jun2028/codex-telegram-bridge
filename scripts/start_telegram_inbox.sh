@@ -25,7 +25,7 @@ Accepted Telegram commands:
   /timed list
   /timed remove [NUMBER]
   /help
-  normal text, PDF/TXT/MD document, photo, or voice note -> relayed to target tmux agent pane
+  normal text, PDF/TXT/MD/HTML documents, photos, or voice notes -> relayed to target tmux agent pane
 
 The default relay mode is tmux-enter. It refuses to press Enter into shell panes,
 so start Codex/agent in the target pane before sending messages for the agent.
@@ -194,7 +194,8 @@ if [[ -n "${TELEAGENT_SECRET_ENV:-}" ]]; then
 fi
 
 LISTENER_COMMAND="python3 scripts/telegram_inbox.py --session $session_q --target-pane $target_q --codex-window $codex_window_q --relay-mode $mode_q --submit-delay $submit_delay_q$EXTRA_ARGS"
-COMMAND="cd $repo_q && export TELEAGENT_INSTANCE=$instance_q && source scripts/relay_paths.sh && set +e && mkdir -p $telegram_log_dir_q && while true; do printf '[%s] starting telegram_inbox target=%s mode=%s\n' \"\$(date -Iseconds)\" $target_q $mode_q >> $supervisor_log_q; $LISTENER_COMMAND >> $supervisor_log_q 2>&1 & listener_pid=\$!; printf '%s\n' \"\$listener_pid\" > $listener_pid_file_q; wait \"\$listener_pid\"; rc=\$?; rm -f $listener_pid_file_q; printf '[%s] telegram_inbox exited rc=%s; restarting in 5s\n' \"\$(date -Iseconds)\" \"\$rc\" >> $supervisor_log_q; sleep 5; done"
+printf -v inbox_supervisor_q '%q' "$SCRIPT_DIR/telegram_inbox_supervisor.sh"
+COMMAND="cd $repo_q && export TELEAGENT_INSTANCE=$instance_q && source scripts/relay_paths.sh && exec $inbox_supervisor_q -- $LISTENER_COMMAND"
 TMUX_COMMAND="$(tele_agent_tmux_bash_command "$COMMAND")"
 rm -f "$LISTENER_PID_FILE"
 tmux new-window -t "$SESSION" -n "$WINDOW" -c "$TELEAGENT_REPO" "$TMUX_COMMAND" >/dev/null

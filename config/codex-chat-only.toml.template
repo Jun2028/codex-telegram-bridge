@@ -1,0 +1,53 @@
+# Generated into a private per-instance CODEX_HOME. The placeholders are
+# rendered by scripts/render_chat_only_codex_config.py.
+__TELEAGENT_PROVIDER_SETTINGS__
+approval_policy = "never"
+default_permissions = "tele-agent-chat-only"
+web_search = "disabled"
+allow_login_shell = false
+developer_instructions = __TELEAGENT_DEVELOPER_INSTRUCTIONS__
+
+[permissions.tele-agent-chat-only]
+description = "Chat only: deny every command filesystem and network request"
+
+[permissions.tele-agent-chat-only.filesystem]
+":root" = "deny"
+
+[permissions.tele-agent-chat-only.network]
+enabled = false
+
+[features]
+apps = false
+auth_elicitation = false
+browser_use = false
+browser_use_external = false
+browser_use_full_cdp_access = false
+code_mode = false
+code_mode_host = false
+computer_use = false
+goals = false
+hooks = false
+image_generation = false
+in_app_browser = false
+multi_agent = false
+multi_agent_v2 = false
+plugins = false
+plugin_sharing = false
+recommended_plugins = false
+remote_plugin = false
+request_permissions_tool = false
+shell_snapshot = false
+shell_tool = false
+skill_mcp_dependency_install = false
+skill_search = false
+tool_call_mcp_elicitation = false
+tool_suggest = false
+unified_exec = false
+view_image = false
+workspace_dependencies = false
+
+[shell_environment_policy]
+inherit = "none"
+ignore_default_excludes = false
+
+__TELEAGENT_PROVIDER_TABLES__

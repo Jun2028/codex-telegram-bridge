@@ -43,14 +43,18 @@ class TelegramAgentRegistryTests(unittest.TestCase):
         cwd: Path | None = None,
         sessions_dir: Path | None = None,
         extra_record: dict[str, object] | None = None,
+        payload_extra: dict[str, object] | None = None,
     ) -> Path:
         root = sessions_dir or self.sessions
         root.mkdir(parents=True, exist_ok=True)
         path = root / name
+        payload: dict[str, object] = {"cwd": str(cwd or self.repo)}
+        if payload_extra:
+            payload.update(payload_extra)
         record: dict[str, object] = {
             "type": "session_meta",
             "timestamp": timestamp,
-            "payload": {"cwd": str(cwd or self.repo)},
+            "payload": payload,
         }
         if extra_record:
             record.update(extra_record)
@@ -130,6 +134,31 @@ class TelegramAgentRegistryTests(unittest.TestCase):
         )
 
         self.assertEqual(found, private_session)
+        self.assertEqual(reason, "user_marker")
+
+    def test_user_marker_search_ignores_subagent_rollout(self) -> None:
+        main_session = self._session("main-marker.jsonl", "2026-07-19T04:00:01Z")
+        helper_session = self._session(
+            "helper-marker.jsonl",
+            "2026-07-19T04:00:02Z",
+            payload_extra={"agent_path": "worker"},
+        )
+        marker = '[TELEGRAM USER MESSAGE message_id=10]\n'
+        main_session.write_text(
+            main_session.read_text(encoding="utf-8") + marker,
+            encoding="utf-8",
+        )
+        helper_session.write_text(
+            helper_session.read_text(encoding="utf-8") + marker,
+            encoding="utf-8",
+        )
+        helper_session.touch()
+
+        found, reason = registry.codex_session_with_latest_user_message(
+            "tele-agent:codex.0", codex_home=self.home / ".codex"
+        )
+
+        self.assertEqual(found, main_session)
         self.assertEqual(reason, "user_marker")
 
     def test_new_process_rejects_old_session_seen_through_process_fd(self) -> None:
@@ -255,7 +284,11 @@ class TelegramAgentRegistryTests(unittest.TestCase):
 
     def test_process_fd_discovery_keeps_preferred_session_opened_by_main(self) -> None:
         main_session = self._session("main.jsonl", "2026-07-19T04:00:00Z")
-        helper_session = self._session("helper.jsonl", "2026-07-19T05:00:00Z")
+        helper_session = self._session(
+            "helper.jsonl",
+            "2026-07-19T05:00:00Z",
+            payload_extra={"agent_path": "worker"},
+        )
         helper_session.touch()
         rows = [(100, 1, "bash"), (120, 100, "codex")]
 
@@ -277,7 +310,11 @@ class TelegramAgentRegistryTests(unittest.TestCase):
 
     def test_process_fd_discovery_uses_root_session_when_link_is_missing(self) -> None:
         main_session = self._session("main.jsonl", "2026-07-19T04:00:00Z")
-        helper_session = self._session("helper.jsonl", "2026-07-19T05:00:00Z")
+        helper_session = self._session(
+            "helper.jsonl",
+            "2026-07-19T05:00:00Z",
+            payload_extra={"agent_path": "worker"},
+        )
         helper_session.touch()
         rows = [(100, 1, "bash"), (120, 100, "codex")]
 
@@ -294,6 +331,78 @@ class TelegramAgentRegistryTests(unittest.TestCase):
 
         self.assertEqual(found, main_session)
         self.assertEqual(reason, "process_fd")
+
+    def test_process_fd_discovery_replaces_preferred_subagent_link(self) -> None:
+        main_session = self._session("main.jsonl", "2026-07-19T04:00:00Z")
+        helper_session = self._session(
+            "helper.jsonl",
+            "2026-07-19T05:00:00Z",
+            payload_extra={"agent_path": "worker"},
+        )
+        rows = [(100, 1, "bash"), (120, 100, "codex")]
+
+        with (
+            mock.patch.object(registry, "tmux_pane_pid", return_value=100),
+            mock.patch.object(registry, "ps_rows", return_value=rows),
+            mock.patch.object(
+                registry,
+                "session_files_open_by_pid",
+                return_value=[main_session, helper_session],
+            ),
+        ):
+            found, reason = registry.codex_session_for_pane(
+                "tele-agent:codex.0", preferred_session_path=helper_session
+            )
+
+        self.assertEqual(found, main_session)
+        self.assertEqual(reason, "process_fd")
+
+    def test_newest_session_never_falls_back_to_helper_mtime(self) -> None:
+        helper_session = self._session(
+            "helper.jsonl", "2026-07-19T05:00:00Z"
+        )
+        helper_session.touch()
+        rows = [(100, 1, "bash"), (120, 100, "codex")]
+
+        with (
+            mock.patch.object(registry, "tmux_pane_pid", return_value=100),
+            mock.patch.object(registry, "ps_rows", return_value=rows),
+            mock.patch.object(
+                registry, "session_files_open_by_pid", return_value=[]
+            ),
+        ):
+            found, reason = registry.codex_newest_session_for_pane(
+                "tele-agent:codex.0", codex_home=self.home / ".codex"
+            )
+
+        self.assertIsNone(found)
+        self.assertEqual(reason, "process_fd_not_found")
+
+    def test_newest_open_session_ignores_subagent(self) -> None:
+        main_session = self._session("main.jsonl", "2026-07-19T04:00:00Z")
+        helper_session = self._session(
+            "helper.jsonl",
+            "2026-07-19T05:00:00Z",
+            payload_extra={"agent_path": "worker"},
+        )
+        helper_session.touch()
+        rows = [(100, 1, "bash"), (120, 100, "codex")]
+
+        with (
+            mock.patch.object(registry, "tmux_pane_pid", return_value=100),
+            mock.patch.object(registry, "ps_rows", return_value=rows),
+            mock.patch.object(
+                registry,
+                "session_files_open_by_pid",
+                return_value=[main_session, helper_session],
+            ),
+        ):
+            found, reason = registry.codex_newest_session_for_pane(
+                "tele-agent:codex.0", codex_home=self.home / ".codex"
+            )
+
+        self.assertEqual(found, main_session)
+        self.assertEqual(reason, "process_fd_newest")
 
     def test_refresh_keeps_valid_link_when_process_fd_is_temporarily_missing(self) -> None:
         current_session = self._session("current.jsonl", "2026-07-19T04:00:00Z")

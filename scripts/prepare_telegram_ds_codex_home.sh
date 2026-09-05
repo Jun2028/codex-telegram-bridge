@@ -38,7 +38,26 @@ install -m 600 "$DS_UTILS_ROOT/models.json" "$DS_CODEX_HOME/models.json"
 install -m 600 "$DS_UTILS_ROOT/deepseek-v4-flash.json" \
   "$DS_CODEX_HOME/agent-model.json"
 
-cat > "$DS_CODEX_HOME/config.toml" <<TOML
+if [[ "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
+  tele_agent_prepare_chat_only_workspace "$TELEAGENT_CHAT_ONLY_WORKDIR"
+  for shared_name in packages plugins skills rules gh gitconfig vendor_imports; do
+    target_path="$DS_CODEX_HOME/$shared_name"
+    if [[ -L "$target_path" ]]; then
+      unlink "$target_path"
+    elif [[ -e "$target_path" ]]; then
+      echo "chat-only Codex home contains capability data: $target_path" >&2
+      exit 1
+    fi
+  done
+  "$SCRIPT_DIR/render_chat_only_codex_config.py" \
+    --output "$DS_CODEX_HOME/config.toml" \
+    --personality "$TELEAGENT_PERSONALITY_FILE" \
+    --trusted-project "$TELEAGENT_CHAT_ONLY_WORKDIR" \
+    --provider deepseek \
+    --model-catalog "$DS_CODEX_HOME/models.json" \
+    --model-spec "$DS_CODEX_HOME/agent-model.json"
+else
+  cat > "$DS_CODEX_HOME/config.toml" <<TOML
 model = "deepseek-v4-flash"
 model_provider = "deepseek"
 model_reasoning_effort = "max"
@@ -73,6 +92,7 @@ AGENT_MODEL_SPEC_PATH = "$DS_CODEX_HOME/agent-model.json"
 [projects."$TELEAGENT_REPO"]
 trust_level = "trusted"
 TOML
+fi
 chmod 600 "$DS_CODEX_HOME/config.toml"
 
-echo "prepared DeepSeek bridge codex home: $DS_CODEX_HOME"
+echo "prepared $TELEAGENT_CODEX_ACCESS_MODE DeepSeek tele-agent Codex home: $DS_CODEX_HOME"

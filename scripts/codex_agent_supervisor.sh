@@ -18,6 +18,7 @@ MODEL="${TELEAGENT_CODEX_MODEL:-gpt-5.6-sol}"
 REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-high}"
 CODEX_BIN="${TELEAGENT_CODEX_BIN:-codex}"
 CHECK_FOR_UPDATE_ON_STARTUP="${TELEAGENT_CODEX_CHECK_FOR_UPDATE_ON_STARTUP:-false}"
+ACCESS_MODE="${TELEAGENT_CODEX_ACCESS_MODE:-full-access}"
 MAX_RESTARTS="${TELEAGENT_CODEX_SUPERVISOR_MAX_RESTARTS:-0}"
 STABLE_SECONDS="${TELEAGENT_CODEX_SUPERVISOR_STABLE_SECONDS:-300}"
 BASE_DELAY="${TELEAGENT_CODEX_SUPERVISOR_BASE_DELAY:-5}"
@@ -78,8 +79,9 @@ failure_count=0
 restart_count=0
 while [[ "$stop_requested" -eq 0 ]]; do
   started_at="$(date +%s)"
-  printf '[%s] starting codex model=%s reasoning=%s restart_count=%s\n' \
-    "$(date -Iseconds)" "$MODEL" "$REASONING_EFFORT" "$restart_count" >> "$LOG_PATH"
+  printf '[%s] starting codex model=%s reasoning=%s access=%s restart_count=%s\n' \
+    "$(date -Iseconds)" "$MODEL" "$REASONING_EFFORT" "$ACCESS_MODE" \
+    "$restart_count" >> "$LOG_PATH"
 
   use_ds=0
   case "$MODEL" in
@@ -97,10 +99,14 @@ while [[ "$stop_requested" -eq 0 ]]; do
     fi
     unset OPENAI_API_KEY OPENAI_BASE_URL || true
   else
-    if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
+    if [[ "$TELEAGENT_INSTANCE" != "main" || "$ACCESS_MODE" == "chat-only" ]]; then
       "$SCRIPT_DIR/prepare_telegram_codex_home.sh" >/dev/null
     fi
-    export CODEX_HOME="$TELEAGENT_CODEX_HOME"
+    if [[ "$ACCESS_MODE" == "chat-only" ]]; then
+      export CODEX_HOME="$TELEAGENT_CHAT_ONLY_CODEX_HOME"
+    else
+      export CODEX_HOME="$TELEAGENT_CODEX_HOME"
+    fi
     unset DEEPSEEK_API_KEY OPENAI_BASE_URL || true
   fi
 
@@ -109,10 +115,16 @@ while [[ "$stop_requested" -eq 0 ]]; do
     -c "model_reasoning_effort=\"$REASONING_EFFORT\""
     -c "check_for_update_on_startup=$CHECK_FOR_UPDATE_ON_STARTUP"
     --no-alt-screen
-    --sandbox danger-full-access
-    --ask-for-approval never
-    --cd "$TELEAGENT_REPO"
   )
+  if [[ "$ACCESS_MODE" == "chat-only" ]]; then
+    codex_args+=(--strict-config --cd "$TELEAGENT_CHAT_ONLY_WORKDIR")
+  else
+    codex_args+=(
+      --sandbox danger-full-access
+      --ask-for-approval never
+      --cd "$TELEAGENT_REPO"
+    )
+  fi
   if [[ "$use_ds" -eq 0 ]]; then
     codex_args+=(--enable fast_mode)
   fi

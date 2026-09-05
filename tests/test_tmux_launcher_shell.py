@@ -17,6 +17,7 @@ START_AGENT = REPO_ROOT / "scripts" / "start_codex_agent.sh"
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import telegram_inbox  # noqa: E402
+from teleagent import processes as _relay_processes
 
 
 @unittest.skipUnless(shutil.which("tmux"), "tmux is required")
@@ -202,8 +203,13 @@ class TmuxLauncherShellTests(unittest.TestCase):
                     "TELEAGENT_REPO": str(fixture_repo),
                     "TELEAGENT_SCRATCH": str(root / "scratch"),
                     "TELEAGENT_LOG_DIR": str(runtime),
+                    "TELEAGENT_AGENT_DIR": str(runtime / "agents"),
+                    "TELEAGENT_AGENT_OUTBOX": str(
+                        runtime / "telegram_agent_outbox.jsonl"
+                    ),
                     "TELEAGENT_SECRET_ENV": str(root / "unused-secret.env"),
                     "TELEAGENT_CODEX_HOME": str(root / "codex-home"),
+                    "TELEAGENT_CODEX_BIN": str(fake_codex),
                     "FAKE_CODEX_ARGS_PATH": str(root / "codex-args.txt"),
                     "FAKE_CODEX_ENV_PATH": str(root / "codex-env.txt"),
                     "TELEAGENT_CODEX_MODEL": "gpt-5.6-sol",
@@ -381,9 +387,9 @@ class PythonLifecycleShellTests(unittest.TestCase):
                     "TELEAGENT_CODEX_HOME": str(private_home),
                 },
             ),
-            mock.patch.object(telegram_inbox, "ensure_tmux_session"),
+            mock.patch.object(_relay_processes, "ensure_tmux_session"),
             mock.patch.object(
-                telegram_inbox, "tmux_window_exists", return_value=False
+                _relay_processes, "tmux_window_exists", return_value=False
             ),
             mock.patch.object(telegram_inbox.subprocess, "run") as run,
             mock.patch.object(
@@ -402,10 +408,10 @@ class PythonLifecycleShellTests(unittest.TestCase):
                 return_value=meta,
             ),
             mock.patch.object(
-                telegram_inbox, "codex_executable", return_value="/tmp/fake-codex"
+                _relay_processes, "codex_executable", return_value="/tmp/fake-codex"
             ),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
         ):
             telegram_inbox.start_codex_agent(

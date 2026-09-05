@@ -1,6 +1,6 @@
 # tmux safety manual
 
-The relay, Codex supervisor, inbox, and other long-running work may
+The `tele-agent` relay, Codex supervisor, inbox, and other long-running work may
 share one tmux server. A server-wide command can therefore terminate the agent,
 its active conversation, and unrelated panes at once.
 
@@ -35,7 +35,7 @@ wrapped command cannot reach the live relay server.
 For manual isolation without the wrapper, both pieces are required:
 
 ```bash
-tmux_test_root=$(mktemp -d /tmp/codex-telegram-bridge-tmux-test.XXXXXX)
+tmux_test_root=$(mktemp -d /tmp/tele-agent-tmux-test.XXXXXX)
 env -u TMUX TMUX_TMPDIR="$tmux_test_root" tmux new-session -d -s fixture
 env -u TMUX TMUX_TMPDIR="$tmux_test_root" tmux kill-server
 rmdir "$tmux_test_root"

@@ -36,7 +36,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
     parser.add_argument("--session", default=os.environ.get("TELEAGENT_TMUX_SESSION", "tele-agent"))
-    parser.add_argument("--title", default="bridge tmux agent report")
+    parser.add_argument("--title", default="tele-agent tmux agent report")
     parser.add_argument("--level", default="info", choices=["info", "success", "warning", "error"])
     parser.add_argument("--tmux-lines", type=int, default=80)
     parser.add_argument("--extra", action="append", default=[])

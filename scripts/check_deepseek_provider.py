@@ -59,7 +59,7 @@ def _request_json(
     headers = {
         "Accept": "application/json",
         "Authorization": f"Bearer {api_key}",
-        "User-Agent": "codex-telegram-bridge-deepseek-preflight/1",
+        "User-Agent": "tele-agent-deepseek-preflight/1",
     }
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")

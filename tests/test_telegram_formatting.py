@@ -15,6 +15,7 @@ if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
 import telegram_inbox  # noqa: E402
+from teleagent import transport as _relay_transport
 from telegram_format import render_telegram_html  # noqa: E402
 
 
@@ -64,14 +65,14 @@ class TelegramFormattingTests(unittest.TestCase):
         self.assertIn('<pre><code class="language-python">print(1)', rendered)
 
     def test_send_reply_uses_html_parse_mode(self) -> None:
-        with mock.patch.object(telegram_inbox, "telegram_api") as api:
+        with mock.patch.object(_relay_transport, "telegram_api") as api:
             telegram_inbox.send_reply("token", "123", "**bold**")
         params = api.call_args.args[2]
         self.assertEqual(params["parse_mode"], "HTML")
         self.assertEqual(params["text"], "<b>bold</b>")
 
     def test_send_reply_attaches_quick_action_keyboard(self) -> None:
-        with mock.patch.object(telegram_inbox, "telegram_api") as api:
+        with mock.patch.object(_relay_transport, "telegram_api") as api:
             telegram_inbox.send_reply("token", "123", "hello")
         params = api.call_args.args[2]
         keyboard = json.loads(params["reply_markup"])
@@ -80,7 +81,7 @@ class TelegramFormattingTests(unittest.TestCase):
 
     def test_send_reply_falls_back_to_plain_text_on_format_error(self) -> None:
         with mock.patch.object(
-            telegram_inbox,
+            _relay_transport,
             "telegram_api",
             side_effect=[RuntimeError("Bad Request: can't parse entities"), None],
         ) as api:
@@ -92,7 +93,7 @@ class TelegramFormattingTests(unittest.TestCase):
 
     def test_send_reply_does_not_retry_transient_failures(self) -> None:
         with mock.patch.object(
-            telegram_inbox,
+            _relay_transport,
             "telegram_api",
             side_effect=telegram_inbox.TransientTelegramError("temporary"),
         ) as api:

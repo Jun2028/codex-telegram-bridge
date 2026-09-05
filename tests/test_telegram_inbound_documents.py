@@ -14,6 +14,11 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import telegram_inbox  # noqa: E402
+from teleagent import attachments as _relay_attachments
+from teleagent import lifecycle as _relay_lifecycle
+from teleagent import processes as _relay_processes
+from teleagent import submission as _relay_submission
+from teleagent import transport as _relay_transport
 
 
 class FakeResponse(io.BytesIO):
@@ -55,7 +60,7 @@ class TelegramInboundDocumentTests(unittest.TestCase):
         message = {
             "message_id": 91,
             "date": 1_900_000_000,
-            "chat": {"id": "123", "type": "private"},
+            "chat": {"id": "123"},
             "from": {"id": 456, "username": "tester"},
             "document": {
                 "file_id": "telegram-file-id",
@@ -79,7 +84,7 @@ class TelegramInboundDocumentTests(unittest.TestCase):
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_transport,
                 "telegram_api",
                 return_value={"file_path": "documents/file_1.pdf"},
             ) as api,
@@ -104,7 +109,7 @@ class TelegramInboundDocumentTests(unittest.TestCase):
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_rejects_unsupported_extension_before_network(self) -> None:
-        with mock.patch.object(telegram_inbox, "telegram_api") as api:
+        with mock.patch.object(_relay_transport, "telegram_api") as api:
             with self.assertRaisesRegex(ValueError, "accepted extensions"):
                 telegram_inbox.download_telegram_document(
                     "token",
@@ -113,6 +118,39 @@ class TelegramInboundDocumentTests(unittest.TestCase):
                     91,
                 )
         api.assert_not_called()
+
+    def test_downloads_and_validates_html(self) -> None:
+        payload = b"<!doctype html><html><body><p>Hello</p></body></html>\n"
+        document = {
+            "file_id": "file-id",
+            "file_name": "page.html",
+            "mime_type": "text/html",
+            "file_size": len(payload),
+        }
+        with (
+            mock.patch.object(
+                _relay_transport,
+                "telegram_api",
+                return_value={"file_path": "documents/file_3.html"},
+            ) as api,
+            mock.patch.object(
+                telegram_inbox.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(payload),
+            ),
+        ):
+            received = telegram_inbox.download_telegram_document(
+                "token", document, self.inbound, 93
+            )
+
+        api.assert_called_once_with(
+            "token", "getFile", {"file_id": "file-id"}, timeout=35
+        )
+        path = Path(received["path"])
+        self.assertEqual(path.name, "message_93_page.html")
+        self.assertEqual(path.read_bytes(), payload)
+        self.assertEqual(received["suffix"], ".html")
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
 
     def test_infers_missing_filename_from_supported_mime_type(self) -> None:
         payload = b"plain text\n"
@@ -123,7 +161,7 @@ class TelegramInboundDocumentTests(unittest.TestCase):
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_transport,
                 "telegram_api",
                 return_value={"file_path": "documents/file_2"},
             ),
@@ -141,7 +179,7 @@ class TelegramInboundDocumentTests(unittest.TestCase):
         self.assertEqual(received["original_name"], "document.txt")
 
     def test_rejects_oversized_document_before_network(self) -> None:
-        with mock.patch.object(telegram_inbox, "telegram_api") as api:
+        with mock.patch.object(_relay_transport, "telegram_api") as api:
             with self.assertRaisesRegex(ValueError, "inbound limit"):
                 telegram_inbox.download_telegram_document(
                     "token",
@@ -171,19 +209,19 @@ class TelegramInboundDocumentTests(unittest.TestCase):
         }
         with (
             mock.patch.object(
-                telegram_inbox, "download_telegram_document", return_value=received
+                _relay_attachments, "download_telegram_document", return_value=received
             ) as download,
             mock.patch.object(
-                telegram_inbox, "ensure_codex_target_for_agent_message", return_value=None
+                _relay_lifecycle, "ensure_codex_target_for_agent_message", return_value=None
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=False),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=False),
             mock.patch.object(
-                telegram_inbox, "paste_to_tmux", return_value="relayed to tele-agent:codex.0"
+                _relay_submission, "paste_to_tmux", return_value="relayed to tele-agent:codex.0"
             ) as paste,
             mock.patch.object(
                 telegram_inbox.agent_registry, "active_agent_for_pane", return_value=None
             ),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update, self.args(), {}, "token", "123", log_path
@@ -213,19 +251,19 @@ class TelegramInboundDocumentTests(unittest.TestCase):
         }
         with (
             mock.patch.object(
-                telegram_inbox, "download_telegram_document", return_value=received
+                _relay_attachments, "download_telegram_document", return_value=received
             ),
             mock.patch.object(
-                telegram_inbox, "ensure_codex_target_for_agent_message", return_value=None
+                _relay_lifecycle, "ensure_codex_target_for_agent_message", return_value=None
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=False),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=False),
             mock.patch.object(
-                telegram_inbox, "paste_to_tmux", return_value="relayed to tele-agent:codex.0"
+                _relay_submission, "paste_to_tmux", return_value="relayed to tele-agent:codex.0"
             ) as paste,
             mock.patch.object(
                 telegram_inbox.agent_registry, "active_agent_for_pane", return_value=None
             ),
-            mock.patch.object(telegram_inbox, "send_reply"),
+            mock.patch.object(_relay_transport, "send_reply"),
         ):
             telegram_inbox.handle_update(
                 update, self.args(), {}, "token", "123", log_path
