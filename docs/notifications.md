@@ -84,6 +84,17 @@ private through `/reauth`; the listener stays available while the agent is
 stopped or signing in. Inspect local runtime logs for the exact failure.
 Do not clear offsets to retry delivery: it can replay old requests or replies.
 
+Control results and notices are saved before delivery. Telegram send failures
+retry the saved reply, not the command that produced it. `/status` distinguishes
+delivery failures from a healthy reply check and counts pending control replies.
+`/queue` shows failed or unconfirmed requests with their recorded reason in
+private; group views keep private diagnostics out. An unconfirmed outcome means
+the action may already have happened, so inspect it before resubmitting.
+
+A reset that was redeemed remains recorded as redeemed if its follow-up restart
+fails. The result explains which step failed and does not suggest redeeming a
+second reset to repair an agent restart.
+
 The optional `group_feed_listener.py` is an independent observation process.
 It must use its own bot/update stream; two processes polling the same bot token
 compete for Telegram updates. Group-feed content is data, never privileged

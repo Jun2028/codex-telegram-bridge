@@ -19,6 +19,7 @@ from . import routing as _routing
 from . import state as _state
 from . import submission as _submission
 from . import transport as _transport
+from . import replies as _replies
 
 
 def parse_timed_payload(payload: str) -> tuple[float, str]:
@@ -382,7 +383,7 @@ def process_due_timed_messages(
 
     def send_timed_notice(text: str) -> None:
         try:
-            _transport.send_reply(token, allowed_chat_id, text)
+            _replies.send(args, token, allowed_chat_id, text)
         except Exception as exc:
             _state.append_jsonl(
                 log_path,
@@ -397,7 +398,10 @@ def process_due_timed_messages(
         task: dict[str, Any],
         snapshot: dict[str, Any],
     ) -> bool:
-        if task.get("visible_echo_sent_ts") is not None:
+        if (
+            task.get("visible_echo_sent_ts") is not None
+            or task.get("visible_echo_queued_ts") is not None
+        ):
             return True
         reply_to_message_id = snapshot.get("message_id")
         try:
@@ -405,7 +409,8 @@ def process_due_timed_messages(
         except (TypeError, ValueError):
             reply_to_message_id = None
         try:
-            result = _transport.send_reply(
+            result = _replies.send(
+                args,
                 token,
                 timed_message_task_chat_id(task) or allowed_chat_id,
                 format_timed_message_fired(task),
@@ -435,12 +440,15 @@ def process_due_timed_messages(
             events.append(event)
             return False
 
-        task["visible_echo_sent_ts"] = time.time()
+        echo_state = (
+            "queued" if isinstance(result, dict) and result.get("queued") else "sent"
+        )
+        task[f"visible_echo_{echo_state}_ts"] = time.time()
         if isinstance(result, dict) and result.get("message_id") is not None:
             task["visible_echo_message_id"] = result["message_id"]
         event = {
             "ts": int(time.time()),
-            "event": "timed_message_visible_echo_sent",
+            "event": f"timed_message_visible_echo_{echo_state}",
             "timed_message_id": task.get("id"),
             "message_id": snapshot.get("message_id"),
             "visible_echo_message_id": task.get("visible_echo_message_id"),

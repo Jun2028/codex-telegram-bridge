@@ -15,6 +15,12 @@ from typing import Callable
 from . import state
 
 
+class MaintenanceError(RuntimeError):
+    def __init__(self, operation, cause):
+        self.operation = operation
+        super().__init__(f"{operation} check failed ({type(cause).__name__})")
+
+
 class Inbox:
     def __init__(self, path: Path):
         self.path = path
@@ -58,6 +64,10 @@ class Inbox:
             if not pending:
                 return None
             item = pending[0]
+            if item.get("started_ts"):
+                raise RuntimeError(
+                    "A prior request has an unconfirmed outcome; it will not be executed again."
+                )
             item["started_ts"] = time.time()
             state.write_json_object(self.path, data)
             return item["update"]
@@ -101,9 +111,14 @@ class RelayWorkers:
 
     def mark(self, **values) -> None:
         with self.health_lock:
+            error_changed = any(
+                key.endswith("_error") and self.health.get(key) != value
+                for key, value in values.items()
+            )
             self.health.update(values)
             if (
                 "control_update_id" in values
+                or error_changed
                 or time.monotonic() - self.health_written >= 2
             ):
                 state.write_json_object(self.health_path, self.health)
@@ -118,10 +133,15 @@ class RelayWorkers:
             try:
                 self.dispatch(update)
             except Exception as exc:
-                detail = self.on_error("handle_update_failed", exc, update)
-                self.inbox.finish(
-                    update["update_id"], detail or "Delivery failed; check /queue."
-                )
+                detail = None
+                try:
+                    detail = self.on_error("handle_update_failed", exc, update)
+                finally:
+                    self.inbox.finish(
+                        update["update_id"],
+                        detail
+                        or "Request outcome unconfirmed; check /queue before retrying.",
+                    )
             else:
                 self.inbox.finish(update["update_id"])
             finally:
@@ -132,10 +152,15 @@ class RelayWorkers:
         while not self.stop.is_set():
             try:
                 action()
-                self.mark(**{name + "_ok_ts": time.time()})
+                self.mark(**{name + "_ok_ts": time.time(), name + "_error": None})
             except Exception as exc:
                 self.on_error(name + "_failed", exc, None)
-                self.mark(**{name + "_error_ts": time.time()})
+                self.mark(
+                    **{
+                        name + "_error_ts": time.time(),
+                        name + "_error": type(exc).__name__,
+                    }
+                )
             self.wake.wait(interval)
             self.wake.clear()
 

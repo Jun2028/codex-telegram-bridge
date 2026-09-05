@@ -202,7 +202,7 @@ def format_system_status(
         if args is not None
         else _settings.AGENT_DESIRED_RUNNING
     )
-    auth_text = "reauth required" if auth_failure else "ok"
+    auth_text = "reauth required" if auth_failure else "no failure detected"
     meta = agent_registry.active_agent_for_pane(target_pane)
     if meta:
         meta = agent_registry.refresh_codex_session_link(meta, target_pane=target_pane)
@@ -294,10 +294,28 @@ def format_system_status(
             )
             lines.append(f"control: processing for {age}")
         delivered = health.get("delivery_ok_ts")
+        if health.get("delivery_error"):
+            lines.append(
+                "reply delivery: failing; pending replies are retained for retry"
+            )
+        if health.get("control_error"):
+            lines.append(
+                "background checks: failing; inspect the listener error notice"
+            )
         if delivered:
             lines.append(
                 f"reply check: {format_uptime(time.time() - float(delivered))} ago"
             )
+        else:
+            lines.append("reply check: no successful check recorded")
+        reply_path = getattr(args, "control_reply_state_path", "")
+        replies = _state.read_json_object(Path(reply_path)) if reply_path else {}
+        pending_replies = sum(
+            audience_chat_id is None or str(item.get("chat_id")) == audience_chat_id
+            for item in replies.get("pending", [])
+        )
+        if pending_replies:
+            lines.append(f"control replies waiting for delivery: {pending_replies}")
     if session_path:
         context_snapshot = codex_session_context_snapshot(session_path)
         if context_snapshot:

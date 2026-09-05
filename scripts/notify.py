@@ -320,13 +320,13 @@ def telegram_safe_message(title: str, message: str) -> str:
     pbs_queue = fields.get("pbs_queue")
 
     if "started" in title.lower():
-        summary = "Started. Detailed commands and logs are kept local; the agent will summarize progress here."
+        summary = "Process started. Detailed commands and logs are kept local."
     elif status == "0":
-        summary = "Completed successfully. Detailed commands and logs are kept local; the agent will summarize results here."
+        summary = "Process exited successfully. Detailed results are kept in the local log."
     elif status:
-        summary = "Finished with an error. Detailed logs are kept local; the agent will summarize the root cause here."
+        summary = "Process reported an error. Inspect the local log for the cause."
     else:
-        summary = "Status update. Detailed commands and logs are kept local; the agent will summarize progress here."
+        summary = "Status update. Detailed commands and logs are kept local."
 
     details = []
     if pbs_jobid:

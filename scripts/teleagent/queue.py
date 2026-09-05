@@ -18,6 +18,7 @@ from . import routing as _routing
 from . import state as _state
 from . import submission as _submission
 from . import transport as _transport
+from . import replies as _replies
 
 
 def relay_queue_state_path(args: argparse.Namespace) -> Path | None:
@@ -265,7 +266,8 @@ def dispatch_telegram_update(
         )
         if created:
             message = update.get("message") or update.get("edited_message") or {}
-            _transport.send_reply(
+            _replies.send(
+                args,
                 token,
                 source_chat_id,
                 f"Queued ({task['id']}). /queue shows waiting work; /cancel {task['id']} removes it.",
@@ -584,6 +586,14 @@ def drain_telegram_relay_queue(
                 "queue_id": queue_id,
                 "error": _transport.short_error(exc, env),
             },
+        )
+        message = update.get("message") or update.get("edited_message") or {}
+        _replies.send(
+            args,
+            token,
+            str((message.get("chat") or {}).get("id") or allowed_chat_id),
+            f"Queued request {queue_id} has an unconfirmed delivery outcome. Check /queue before resending.",
+            message_thread_id=message.get("message_thread_id"),
         )
         return []
 

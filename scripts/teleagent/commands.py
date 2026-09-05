@@ -26,6 +26,7 @@ from . import state as _state
 from . import status as _status
 from . import submission as _submission
 from . import transport as _transport
+from . import replies as _replies
 from . import usage as _usage
 
 
@@ -110,7 +111,8 @@ def handle_update(
         and not group_owner
         and command not in {"", "(agent-message)", "/status", "/ping", "/help"}
     ):
-        _transport.send_reply(
+        _replies.send(
+            args,
             token,
             source_chat_id,
             "Only the bot owner can use agent controls.",
@@ -124,7 +126,8 @@ def handle_update(
         "/confirm",
         "/agent_status",
     }:
-        _transport.send_reply(
+        _replies.send(
+            args,
             token,
             source_chat_id,
             "Open the bot's private chat for account controls.",
@@ -329,21 +332,31 @@ def handle_update(
                 {"phase": "executing", "confirmed_ts": int(time.time())}
             )
             _state.write_json_object(reset_state_path, pending_reset)
-            _transport.send_reply(
+            _replies.send(
+                args,
                 token,
                 source_chat_id,
                 "Confirmed. Mechanically redeeming one Full reset; the automatic reset watchdog will be restored afterward.",
             )
             record["action"] = "codex_reset_confirmed"
+            redeemed = False
+            reset_stage = "redeem the reset"
             try:
                 returncode, stdout, stderr = _auth.run_codex_reset_helper(
                     args.repo_root, "--redeem", timeout=180
                 )
-                if returncode != 0 or "RESET_SUCCESS" not in stdout.splitlines():
+                redeemed = "RESET_SUCCESS" in stdout.splitlines()
+                if redeemed:
+                    pending_reset.update(
+                        phase="redeemed", redeemed=True, redeemed_ts=int(time.time())
+                    )
+                    _state.write_json_object(reset_state_path, pending_reset)
+                if returncode != 0 or not redeemed:
                     detail = " ".join(
                         (stderr or stdout or "redemption failed").split()
                     )[:500]
                     raise RuntimeError(detail)
+                reset_stage = "refresh usage state"
                 _usage.clear_codex_usage_depletion(
                     usage_state_path, "manual_usage_reset_redeemed"
                 )
@@ -355,6 +368,7 @@ def handle_update(
                 start_result = "agent remained stopped by operator request"
                 meta = None
                 if restart_agent:
+                    reset_stage = "restart the agent"
                     target_pane, start_result, meta = _lifecycle.start_codex_agent(
                         repo_root=args.repo_root,
                         session=args.session,
@@ -386,13 +400,25 @@ def handle_update(
             except Exception as exc:
                 failed_state = {
                     **pending_reset,
-                    "phase": "failed",
+                    "phase": "redeemed_followup_failed"
+                    if redeemed
+                    else "redemption_unconfirmed",
+                    "redeemed": redeemed,
+                    "failed_stage": reset_stage,
                     "failed_ts": int(time.time()),
                     "error": _transport.short_error(exc, env),
                 }
                 _state.write_json_object(reset_state_path, failed_state)
-                reply = f"Codex reset failed safely: {_transport.short_error(exc, env)}"
-                record["action"] = "codex_reset_failed"
+                reply = (
+                    f"The reset was redeemed, but the listener could not {reset_stage}. Do not redeem another reset for this failure. "
+                    if redeemed
+                    else "Reset redemption could not be confirmed. Check /codex_usage and /codex_reset before trying again. "
+                ) + _transport.short_error(exc, env)
+                record["action"] = (
+                    "codex_reset_followup_failed"
+                    if redeemed
+                    else "codex_reset_unconfirmed"
+                )
                 record["error"] = _transport.short_error(exc, env, args.max_log_chars)
         elif raw_reset_state.get("phase") == "executing":
             reply = "A confirmed Codex reset is already running."
@@ -683,7 +709,8 @@ def handle_update(
                 if command == "/start_agent"
                 else "telegram_restart_agent",
             )
-            _transport.send_reply(
+            _replies.send(
+                args,
                 token,
                 source_chat_id,
                 (
@@ -740,7 +767,11 @@ def handle_update(
                 _auth.clear_codex_auth_failure(auth_state_path, "manual_agent_restart")
         except Exception as exc:
             verb = "start" if command == "/start_agent" else "restart"
-            reply = f"Failed to {verb} Codex agent: {_transport.short_error(exc, env)}"
+            reply = (
+                _transport.short_error(exc, env)
+                if isinstance(exc, _lifecycle.AgentStartUnconfirmed)
+                else f"Failed to {verb} Codex agent: {_transport.short_error(exc, env)}"
+            )
             record["action"] = command.lstrip("/") + "_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
     elif command == "/model":
@@ -774,7 +805,7 @@ def handle_update(
                     },
                 )
         except Exception as exc:
-            reply = f"Failed to switch Codex model: {_transport.short_error(exc, env)}"
+            reply = f"Model change not confirmed: {_transport.short_error(exc, env)}"
             record["action"] = "model_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
     elif command == "/reasoning":
@@ -802,7 +833,7 @@ def handle_update(
                 )
         except Exception as exc:
             reply = (
-                f"Failed to switch Codex reasoning: {_transport.short_error(exc, env)}"
+                f"Reasoning change not confirmed: {_transport.short_error(exc, env)}"
             )
             record["action"] = "reasoning_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
@@ -1179,8 +1210,11 @@ def handle_update(
                 )
                 if args.bridge_ack:
                     try:
-                        _transport.send_reply(
-                            token, source_chat_id, "BRIDGE DEBUG: delivered to Codex."
+                        _replies.send(
+                            args,
+                            token,
+                            source_chat_id,
+                            "BRIDGE DEBUG: delivered to Codex.",
                         )
                         record["bridge_ack"] = True
                     except Exception as exc:
@@ -1216,14 +1250,16 @@ def handle_update(
     _state.append_jsonl(chat_record_log_path, record)
     if reply_chunks:
         for reply_chunk in reply_chunks:
-            _transport.send_reply(
+            _replies.send(
+                args,
                 token,
                 source_chat_id,
                 reply_chunk,
                 message_thread_id=message.get("message_thread_id"),
             )
     elif reply:
-        _transport.send_reply(
+        _replies.send(
+            args,
             token,
             source_chat_id,
             reply,

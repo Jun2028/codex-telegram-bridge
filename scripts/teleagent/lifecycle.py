@@ -103,6 +103,10 @@ def build_codex_agent_command(
     return command
 
 
+class AgentStartUnconfirmed(RuntimeError):
+    """The launcher ran, but a live Codex process was not observed."""
+
+
 def start_codex_agent(
     repo_root: Path,
     session: str,
@@ -192,13 +196,8 @@ def start_codex_agent(
                     meta,
                 )
             if current_command not in _settings.SHELL_COMMANDS:
-                return (
-                    target_pane,
-                    (
-                        f"Not started: {target_pane} is busy with {current_command or 'unknown'}. "
-                        "Use /restart_agent to interrupt it."
-                    ),
-                    None,
+                raise RuntimeError(
+                    f"Agent not started: {target_pane} is occupied by {current_command or 'another process'}. Inspect /status before replacing it."
                 )
 
     start_epoch = time.time()
@@ -226,6 +225,10 @@ def start_codex_agent(
         if _processes.tmux_pane_has_codex_process(target_pane):
             break
         time.sleep(0.5)
+    else:
+        raise AgentStartUnconfirmed(
+            "Agent startup was not confirmed: no Codex process was observed within 10 seconds. Check /status before retrying."
+        )
     meta = agent_registry.refresh_codex_session_link(
         meta, target_pane=target_pane, start_epoch=start_epoch
     )
@@ -399,6 +402,8 @@ def maintain_managed_codex_agent(
 
     now = time.time()
     if now < float(getattr(args, "agent_watchdog_retry_after", 0.0)):
+        if getattr(args, "agent_watchdog_error", None):
+            raise args.agent_watchdog_error
         return None
     args.agent_watchdog_retry_after = now + 30.0
     try:
@@ -421,6 +426,7 @@ def maintain_managed_codex_agent(
         if meta:
             agent_registry.append_agent_event(meta, record)
         args.agent_watchdog_retry_after = 0.0
+        args.agent_watchdog_error = None
         return "Codex agent was not running; the watchdog restarted it automatically."
     except Exception as exc:
         _state.append_jsonl(
@@ -432,4 +438,7 @@ def maintain_managed_codex_agent(
                 "error": str(exc)[:500],
             },
         )
-        return None
+        from .service import MaintenanceError
+
+        args.agent_watchdog_error = MaintenanceError("automatic agent recovery", exc)
+        raise args.agent_watchdog_error from exc

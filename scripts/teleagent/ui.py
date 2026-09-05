@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from notify import redact
 
+from . import replies
 from . import messages, routing, state, status, transport
 
 QUICK_COMMANDS = {"/start", "/help", "/ping", "/status", "/queue", "/cancel", "/models"}
@@ -133,8 +134,17 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
         )
     for task in failures[-3:]:
         message = task_message(task)
+        detail = str(
+            task.get("error")
+            or task.get("last_error")
+            or task.get("stalled_reason")
+            or "delivery outcome unconfirmed"
+        )
+        if is_group:
+            detail = "delivery outcome unconfirmed; check /status before resending"
+        detail = " ".join(detail.split())[:180]
         lines.append(
-            f"Failed message {message.get('message_id', '?')}: check its reply before resending."
+            f"Failed/unconfirmed message {message.get('message_id', '?')}: {detail}"
         )
     if tasks:
         lines.append(
@@ -214,9 +224,22 @@ def handle_quick_update(
         update, owner_chat, owner_user, bot_username, token, member_cache
     )
     if callback:
-        transport.telegram_api(
-            token, "answerCallbackQuery", {"callback_query_id": callback.get("id")}
-        )
+        try:
+            transport.telegram_api(
+                token, "answerCallbackQuery", {"callback_query_id": callback.get("id")}
+            )
+        except RuntimeError as exc:
+            # An expired spinner acknowledgement must not discard Refresh.
+            health_path = getattr(args, "health_state_path", "")
+            if health_path:
+                state.append_jsonl(
+                    Path(health_path).with_name("telegram_inbox.jsonl"),
+                    {
+                        "ts": int(time.time()),
+                        "event": "callback_ack_failed",
+                        "error": transport.short_error(exc, env),
+                    },
+                )
     if chat_id is None:
         return True
     topic = message.get("message_thread_id")
@@ -245,7 +268,8 @@ def handle_quick_update(
         reply = "Online. /status shows the agent; /queue shows waiting work."
     else:
         reply = help_text()
-    transport.send_reply(
+    replies.send(
+        args,
         token,
         chat_id,
         redact(reply, env or {}),
