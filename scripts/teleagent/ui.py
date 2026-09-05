@@ -17,6 +17,7 @@ MENU = [
     ("queue", "Waiting messages and failed deliveries"),
     ("help", "How to use this bot"),
     ("models", "Choose a model and reasoning level"),
+    ("codex_reset", "Check and redeem an available Codex usage reset"),
     ("interrupt", "Stop the current turn and submit a new instruction"),
     ("start_agent", "Start the stopped agent"),
     ("kill_agent", "Stop the agent; keep Telegram online"),
