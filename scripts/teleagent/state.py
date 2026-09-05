@@ -54,12 +54,24 @@ def serialized(function):
     return wrapped
 
 
+class StateReadError(RuntimeError):
+    """Existing state must not be mistaken for a fresh, empty installation."""
+
+
 def read_json_object(path: Path) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
         return {}
-    return value if isinstance(value, dict) else {}
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise StateReadError(
+            f"Cannot read {path.name}; existing state was preserved."
+        ) from exc
+    if not isinstance(value, dict):
+        raise StateReadError(
+            f"Invalid {path.name}; expected an object. Existing state was preserved."
+        )
+    return value
 
 
 def atomic_write(path: Path, text: str) -> None:
@@ -96,9 +108,16 @@ def state_path(repo_root: Path, rel_or_abs: str) -> Path:
 
 def read_offset(path: Path) -> int | None:
     try:
-        return int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError):
+        value = int(path.read_text(encoding="utf-8").strip())
+        if value < 0:
+            raise ValueError("negative offset")
+        return value
+    except FileNotFoundError:
         return None
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise StateReadError(
+            f"Cannot read {path.name}; the delivery cursor was not reset."
+        ) from exc
 
 
 def write_offset(path: Path, offset: int) -> None:

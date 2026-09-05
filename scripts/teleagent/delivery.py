@@ -20,6 +20,7 @@ from . import routing as _routing
 from . import sessions as _sessions
 from . import state as _state
 from . import transport as _transport
+from .replies import DeliveryError
 
 
 def drain_agent_outbox(
@@ -35,12 +36,7 @@ def drain_agent_outbox(
 ) -> None:
     if not outbox_path.exists():
         return
-    offset = 0
-    if offset_path.exists():
-        try:
-            offset = int(offset_path.read_text(encoding="utf-8").strip() or "0")
-        except ValueError:
-            offset = 0
+    offset = _state.read_offset(offset_path) or 0
     size = outbox_path.stat().st_size
     if offset > size:
         offset = 0
@@ -50,6 +46,8 @@ def drain_agent_outbox(
             line_start = handle.tell()
             line = handle.readline()
             if not line:
+                break
+            if not line.endswith("\n"):
                 break
             try:
                 record = json.loads(line)
@@ -134,7 +132,9 @@ def drain_agent_outbox(
                     },
                 )
                 _state.write_offset(offset_path, line_start)
-                return
+                raise DeliveryError(
+                    "A notification could not be sent; delivery will retry."
+                ) from exc
             if log_path is not None:
                 _state.append_jsonl(
                     log_path,
@@ -465,7 +465,9 @@ def drain_codex_agent_messages(
                     active_chat_id=turn.chat_id,
                     active_is_group=turn.is_group,
                 )
-                return sent
+                raise DeliveryError(
+                    "An agent reply could not be sent; delivery will retry."
+                ) from exc
             sent += 1
             turn.delivered(message_key, phase)
             offset = next_offset

@@ -621,7 +621,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertIn("model: deepseek-v4-flash / max", text)
         self.assertIn("uptime: 2m", text)
         self.assertIn("state: running", text)
-        self.assertIn("auth: ok", text)
+        self.assertIn("auth: no failure detected", text)
         self.assertNotIn("qstat", text)
         self.assertNotIn("tmux tail", text)
 

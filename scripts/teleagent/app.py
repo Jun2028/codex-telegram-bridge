@@ -32,6 +32,7 @@ from . import sessions as _sessions
 from . import state as _state
 from . import submission as _submission
 from . import transport as _transport
+from . import replies as _replies
 from . import usage as _usage
 
 
@@ -336,7 +337,7 @@ def main() -> int:
     offset_path = _state.state_path(repo_root, args.state_file)
     log_path = _state.state_path(repo_root, args.log_jsonl)
 
-    def refresh_bot_identity():
+    def refresh_bot_identity(*, raise_errors=False):
         nonlocal owner_user_id, bot_username
         if bot_username:
             return
@@ -356,6 +357,8 @@ def main() -> int:
                     "error": _transport.short_error(exc, env),
                 },
             )
+            if raise_errors:
+                raise
 
     refresh_bot_identity()
     _identity.backfill_per_chat_inbox_records(log_path)
@@ -381,6 +384,9 @@ def main() -> int:
     args.agent_message_state_path = str(agent_message_state_path)
     args.ingress_state_path = str(offset_path.with_name("telegram_ingress.state.json"))
     args.health_state_path = str(offset_path.with_name("telegram_health.state.json"))
+    args.control_reply_state_path = str(
+        offset_path.with_name("telegram_control_replies.state.json")
+    )
     codex_usage_state_path = _state.state_path(repo_root, args.codex_usage_state)
     args.codex_usage_state_path = str(codex_usage_state_path)
     codex_auth_state_path = _state.state_path(repo_root, args.codex_auth_state)
@@ -594,7 +600,8 @@ def main() -> int:
         if not state.get("blocked") or not state.get("alert_pending"):
             return
         try:
-            _transport.send_reply(
+            _replies.send(
+                args,
                 token,
                 chat_id,
                 "**Codex authentication failed**\n\n"
@@ -657,8 +664,8 @@ def main() -> int:
 
         if phase == "awaiting_user" and not state.get("instructions_sent_ts"):
             try:
-                _transport.send_reply(
-                    token, chat_id, _auth.format_codex_reauth_instructions(state)
+                _replies.send(
+                    args, token, chat_id, _auth.format_codex_reauth_instructions(state)
                 )
             except Exception as exc:
                 _state.append_jsonl(
@@ -764,7 +771,8 @@ def main() -> int:
 
         if phase == "completed" and not state.get("completion_sent_ts"):
             try:
-                _transport.send_reply(
+                _replies.send(
+                    args,
                     token,
                     chat_id,
                     (
@@ -801,7 +809,8 @@ def main() -> int:
         elif phase in {"failed", "restart_failed"} and not state.get("failure_sent_ts"):
             detail = str(state.get("error") or "unknown error")[:500]
             try:
-                _transport.send_reply(
+                _replies.send(
+                    args,
                     token,
                     chat_id,
                     f"Codex sign-in recovery failed: {detail} "
@@ -838,7 +847,8 @@ def main() -> int:
         for item in result["stalled"]:
             message_id = item.get("message_id")
             try:
-                _transport.send_reply(
+                _replies.send(
+                    args,
                     token,
                     chat_id,
                     (
@@ -892,11 +902,14 @@ def main() -> int:
     inbox = _service.Inbox(Path(args.ingress_state_path))
     interrupted = inbox.recover()
     if interrupted:
-        _transport.send_reply(
+        _replies.send(
+            args,
             token,
             chat_id,
             f"Listener recovered. {interrupted} interrupted delivery attempt(s) need review in /queue.",
         )
+
+    error_notices = {}
 
     def report_error(event, exc, update):
         detail = _transport.short_error(exc, env, args.max_log_chars)
@@ -916,14 +929,47 @@ def main() -> int:
             if source:
                 message = update.get("message") or update.get("edited_message") or {}
                 try:
-                    _transport.send_reply(
+                    _replies.send(
+                        args,
                         token,
                         source,
-                        "This message could not be delivered. Check /queue before resending.",
+                        (
+                            str(exc)
+                            if isinstance(exc, _state.StateReadError)
+                            else "The listener could not confirm this request's outcome. Check /queue and /status before retrying."
+                        ),
                         message_thread_id=message.get("message_thread_id"),
                     )
                 except Exception:
-                    pass
+                    # If reply storage itself is unavailable, report directly.
+                    # Never rerun the completed control to recreate its reply.
+                    try:
+                        _transport.send_reply(
+                            token,
+                            source,
+                            "The listener could not save a result reply. The action may already have completed; check /status before repeating it.",
+                            message_thread_id=message.get("message_thread_id"),
+                        )
+                    except Exception as notice_error:
+                        _state.append_jsonl(
+                            log_path,
+                            {
+                                "ts": int(time.time()),
+                                "event": "failure_notice_failed",
+                                "error": _transport.short_error(notice_error, env),
+                            },
+                        )
+        operation = getattr(exc, "operation", "")
+        if update is None and operation and operation != "reply_delivery":
+            now = time.time()
+            if now - error_notices.get(operation, 0) >= 300:
+                _replies.send(
+                    args,
+                    token,
+                    chat_id,
+                    f"Listener background check failed: {operation}. Check /status; the listener will retry.",
+                )
+                error_notices[operation] = now
         return detail
 
     def dispatch(update):
@@ -941,42 +987,61 @@ def main() -> int:
         )
 
     maintenance_due = {}
+    maintenance_failures = {}
+
+    def maintain_watchdog():
+        if not args.once:
+            notice = _lifecycle.maintain_managed_codex_agent(args, log_path)
+            if notice:
+                _replies.send(args, token, chat_id, notice)
 
     def maintain():
         for name, interval, action in (
             ("confirmations", 2, reconcile_current_relay_confirmations),
             ("queue", 1, drain_current_relay_queue),
             ("usage", 10, maintain_current_codex_usage),
-            ("identity", 60, refresh_bot_identity),
+            ("identity", 60, lambda: refresh_bot_identity(raise_errors=True)),
             ("auth", 10, maintain_current_codex_auth),
             ("timers", 2, deliver_due_timed_messages),
+            ("watchdog", 10, maintain_watchdog),
         ):
             if time.monotonic() < maintenance_due.get(name, 0):
                 continue
             maintenance_due[name] = time.monotonic() + interval
             try:
                 action()
+                maintenance_failures.pop(name, None)
             except Exception as exc:
                 report_error(name + "_failed", exc, None)
-        if not args.once and time.monotonic() >= maintenance_due.get("watchdog", 0):
-            maintenance_due["watchdog"] = time.monotonic() + 10
-            notice = _lifecycle.maintain_managed_codex_agent(args, log_path)
-            if notice:
-                _transport.send_reply(token, chat_id, notice)
+                maintenance_failures[name] = _service.MaintenanceError(name, exc)
+        if maintenance_failures:
+            raise next(iter(maintenance_failures.values()))
 
     def deliver():
-        drain_current_codex_messages()
-        _delivery.drain_agent_outbox(
-            token,
-            chat_id,
-            agent_outbox_path,
-            agent_outbox_offset_path,
-            log_path,
-            max_ack_age_seconds=args.max_agent_ack_age,
-            max_progress_age_seconds=args.max_agent_progress_age,
-            route_state_path=route_state_path,
-            is_group_route=False,
-        )
+        # A blocked group reply must not prevent private status/control results
+        # from being delivered. Each source keeps its own durable cursor.
+        failures = []
+        for action in (
+            lambda: _replies.drain(args, token, env),
+            drain_current_codex_messages,
+            lambda: _delivery.drain_agent_outbox(
+                token,
+                chat_id,
+                agent_outbox_path,
+                agent_outbox_offset_path,
+                log_path,
+                max_ack_age_seconds=args.max_agent_ack_age,
+                max_progress_age_seconds=args.max_agent_progress_age,
+                route_state_path=route_state_path,
+                is_group_route=False,
+            ),
+        ):
+            try:
+                action()
+            except Exception as exc:
+                failures.append(exc)
+        if failures:
+            raise failures[0]
 
     workers = _service.RelayWorkers(
         inbox, dispatch, maintain, deliver, report_error, Path(args.health_state_path)

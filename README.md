@@ -43,6 +43,10 @@ new Telegram-specific command just to become a task.
 Lifecycle commands take model/effort options, never task text. Send the task in
 a separate message. Changing between provider homes starts a fresh conversation.
 
+If Telegram cannot deliver a control result, the relay saves and retries that
+reply without repeating the action. `/status` shows delivery failures; `/queue`
+shows failed or unconfirmed requests. Check an unconfirmed outcome before retrying.
+
 ## Groups and private messages
 
 Add the bot to a group. It discovers its username through Telegram and uses

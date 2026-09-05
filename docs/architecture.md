@@ -28,6 +28,7 @@ owns a dependency rather than a global in the old monolith.
 | `app`, `service` | Runtime assembly, poller, durable ingress, one serial control worker and independent outbound worker |
 | `ui`, `commands` | Fast phone controls and agent/account operations |
 | `routing`, `events`, `delivery` | Authorization, immutable prompt destinations, turn binding, normalization, deduplication and reply cursors |
+| `replies` | Durable control-result delivery, retry backoff and independent progress for each chat/topic |
 | `queue`, `submission` | FIFO, exact root-user submission checks and bounded composer recovery |
 | `lifecycle`, `processes`, `sessions` | Desired lifecycle state, tmux/process identity, valid root-session discovery |
 | `models`, `status` | Model selectors and observed agent state |
@@ -60,6 +61,12 @@ owns a dependency rather than a global in the old monolith.
    pasted again. Accepted but unstarted ingress survives restart in FIFO order.
 9. Timed work reserves its original chat/topic and waits while the agent is busy.
    The queue never presses Escape or resumes a goal automatically.
+10. A failed control-result send retries the saved reply without repeating its
+    command. Failure in one destination does not block control replies to other
+    chats. Partial control replies retain only their unsent chunks.
+11. Delivery and maintenance failures remain visible in status until a successful
+    check. Recovery failures produce a rate-limited private notice. Corrupt or
+    unreadable state raises an error instead of being overwritten as empty.
 
 State mutations use file/thread locks and atomic replacement with mode 0600 and
 fsync. Each state file has one primary writer; route and queue mutations that
@@ -78,6 +85,7 @@ All paths are relative to the instance's `TELEAGENT_LOG_DIR`.
 | `telegram_reply_route.state.json` | Prompt-to-chat/topic destination records |
 | `telegram_agent_messages.state.json` | Reply cursor, active turn destination and deduplication keys |
 | `telegram_health.state.json` | Control/delivery heartbeat and current control-operation age |
+| `telegram_control_replies.state.json` | Pending control results and notices, with immutable destinations and retry state |
 | `telegram_agent_lifecycle.state.json` | Operator's persistent running/stopped preference |
 | `telegram_timed_messages.state.json` | Scheduled tasks and their delivery state |
 
