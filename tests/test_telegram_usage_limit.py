@@ -17,12 +17,28 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import telegram_inbox  # noqa: E402
+import notify as _relay_notify
+from teleagent import auth as _relay_auth
+from teleagent import lifecycle as _relay_lifecycle
+from teleagent import models as _relay_models
+from teleagent import processes as _relay_processes
+from teleagent import settings as _relay_settings
+from teleagent import status as _relay_status
+from teleagent import submission as _relay_submission
+from teleagent import transport as _relay_transport
 
 
 class TelegramUsageLimitTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
+        active_agent = mock.patch.object(
+            telegram_inbox.agent_registry,
+            "active_agent_for_pane",
+            return_value=None,
+        )
+        active_agent.start()
+        self.addCleanup(active_agent.stop)
         telegram_inbox.REGISTERED_CODEX_PID_CACHE.clear()
         self.root = Path(self.temp.name)
         self.repo = self.root / "repo"
@@ -90,12 +106,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
     def test_codex_target_ready_treats_tmux_timeout_as_transient(self) -> None:
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "registered_codex_process_running",
                 return_value=False,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "tmux_target_exists",
                 side_effect=subprocess.TimeoutExpired(["tmux"], 5),
             ),
@@ -118,7 +134,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 return_value=[(321, 1, "codex")],
             ) as ps_rows,
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "process_has_codex_session",
                 return_value=True,
             ),
@@ -138,11 +154,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
     def test_tmux_relay_uses_registered_codex_and_long_mutation_timeout(self) -> None:
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "registered_codex_process_running",
                 return_value=True,
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists") as target_probe,
+            mock.patch.object(_relay_processes, "tmux_target_exists") as target_probe,
             mock.patch.object(telegram_inbox.subprocess, "run") as run,
         ):
             result = telegram_inbox.paste_to_tmux(
@@ -178,11 +194,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
         )
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "registered_codex_process_running",
                 return_value=True,
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists") as target_probe,
+            mock.patch.object(_relay_processes, "tmux_target_exists") as target_probe,
         ):
             result = telegram_inbox.ensure_codex_target_for_agent_message(args, {})
 
@@ -200,16 +216,16 @@ class TelegramUsageLimitTests(unittest.TestCase):
         log_path = self.root / "listener.jsonl"
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "registered_codex_process_running",
                 return_value=False,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "tmux_target_exists",
                 side_effect=subprocess.TimeoutExpired(["tmux"], 5),
             ),
-            mock.patch.object(telegram_inbox, "start_codex_agent") as start_agent,
+            mock.patch.object(_relay_lifecycle, "start_codex_agent") as start_agent,
         ):
             result = telegram_inbox.maintain_managed_codex_agent(args, log_path)
 
@@ -218,6 +234,39 @@ class TelegramUsageLimitTests(unittest.TestCase):
         record = json.loads(log_path.read_text(encoding="utf-8"))
         self.assertEqual(record["event"], "codex_watchdog_tmux_probe_deferred")
         self.assertEqual(record["error_type"], "TimeoutExpired")
+
+    def test_watchdog_defers_during_external_lifecycle_change(self) -> None:
+        args = argparse.Namespace(
+            agent_watchdog=True,
+            agent_lifecycle_state_path=str(
+                self.root / "telegram_agent_lifecycle.state.json"
+            ),
+            relay_mode="tmux-enter",
+            target_pane="tele-agent:codex.0",
+            session="tele-agent",
+            codex_window="codex",
+        )
+        log_path = self.root / "listener.jsonl"
+        with (
+            mock.patch.object(
+                _relay_lifecycle,
+                "agent_lifecycle_operation_in_progress",
+                return_value=True,
+            ),
+            mock.patch.object(_relay_lifecycle, "start_codex_agent") as start_agent,
+            mock.patch.object(
+                _relay_processes, "registered_codex_process_running"
+            ) as process_probe,
+        ):
+            result = telegram_inbox.maintain_managed_codex_agent(args, log_path)
+
+        self.assertIsNone(result)
+        start_agent.assert_not_called()
+        process_probe.assert_not_called()
+        record = json.loads(log_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            record["event"], "codex_watchdog_lifecycle_change_deferred"
+        )
 
     def test_format_agent_message_includes_full_replied_text(self) -> None:
         message = {
@@ -317,12 +366,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
     def test_parse_live_model_payload_keeps_latest_openai_only(self) -> None:
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_settings,
                 "DEFAULT_CODEX_AGENT_MODEL",
                 "deepseek-v4-pro",
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_settings,
                 "DEFAULT_CODEX_AGENT_REASONING_EFFORT",
                 "max",
             ),
@@ -369,7 +418,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
     def test_current_codex_model_detects_deepseek_flash(self) -> None:
         with mock.patch.object(
-            telegram_inbox,
+            _relay_processes,
             "tmux_tail",
             return_value=(
                 "Current: deepseek-v4-flash max\n"
@@ -389,7 +438,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 "payload": {"model": "gpt-5.6-sol", "effort": "max"},
             }
         )
-        with mock.patch.object(telegram_inbox, "tmux_tail", return_value=""):
+        with mock.patch.object(_relay_processes, "tmux_tail", return_value=""):
             current = telegram_inbox.current_codex_model_and_reasoning_effort(
                 "tele-agent:codex.0",
                 str(self.session),
@@ -408,7 +457,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 },
             }
         )
-        with mock.patch.object(telegram_inbox, "tmux_tail", return_value=""):
+        with mock.patch.object(_relay_processes, "tmux_tail", return_value=""):
             current = telegram_inbox.current_codex_model_and_reasoning_effort(
                 "tele-agent:codex.0",
                 str(self.session),
@@ -419,12 +468,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
     def test_parse_agent_launch_payload_keeps_latest_openai_only(self) -> None:
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_settings,
                 "DEFAULT_CODEX_AGENT_MODEL",
                 "deepseek-v4-pro",
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_settings,
                 "DEFAULT_CODEX_AGENT_REASONING_EFFORT",
                 "max",
             ),
@@ -506,7 +555,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 26,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456},
                 "text": "/status",
             },
@@ -514,11 +563,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
         log_path = self.root / "listener.jsonl"
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_status,
                 "format_system_status",
                 return_value="system status",
             ) as formatter,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update, args, {}, "token", "123", log_path
@@ -542,10 +591,10 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "codex_session_path": None,
         }
         with (
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
-            mock.patch.object(telegram_inbox, "codex_target_ready", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "codex_target_ready", return_value=True),
             mock.patch.object(
-                telegram_inbox,
+                _relay_models,
                 "current_codex_model_and_reasoning_effort",
                 return_value=("deepseek-v4-flash", "max"),
             ),
@@ -597,39 +646,21 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 28,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456},
                 "text": "/help",
             },
         }
-        with mock.patch.object(telegram_inbox, "send_reply") as send_reply:
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
             telegram_inbox.handle_update(
                 update, args, {}, "token", "123", self.root / "help.jsonl"
             )
 
         help_text = send_reply.call_args.args[2]
-        self.assertIn(
-            "/start_agent [MODEL] [LEVEL] — start only when stopped", help_text
-        )
-        self.assertIn("/kill_agent — stop the agent", help_text)
-        self.assertIn(
-            "/restart_agent [MODEL] [LEVEL] — replace a running agent with a "
-            "fresh chat (context is not preserved)",
-            help_text,
-        )
-        self.assertIn(
-            "/model latest|astra|sol|spark|ds-flash|ds-pro [LEVEL]",
-            help_text,
-        )
-        self.assertIn("With MODEL omitted, the configured default is used", help_text)
-        self.assertIn(
-            "Explicit latest always selects gpt-6-astra with reasoning=high",
-            help_text,
-        )
-        self.assertIn("astra is an explicit alias for gpt-6-astra", help_text)
-        self.assertIn("ds-flash/ds-pro select deepseek-v4-flash / deepseek-v4-pro", help_text)
-        self.assertIn("restart_agent ds-flash", help_text)
-        self.assertIn("never accept prompts", help_text)
+        self.assertIn("One bot = one agent", help_text)
+        self.assertIn("/start_agent starts it", help_text)
+        self.assertIn("/restart_agent starts a fresh conversation", help_text)
+        self.assertIn("/models", help_text)
         self.assertNotIn("-- PROMPT", help_text)
 
     def test_restart_agent_passes_launch_overrides(self) -> None:
@@ -647,7 +678,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 31,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/restart_agent max",
             },
@@ -655,7 +686,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         log_path = self.root / "listener.jsonl"
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "start_codex_agent",
                 return_value=(
                     "tele-agent:codex.0",
@@ -664,11 +695,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 ),
             ) as start_agent,
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "managed_codex_agent_present",
                 return_value=True,
             ),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(update, args, {}, "token", "123", log_path)
 
@@ -695,24 +726,24 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 30,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/restart_agent latest",
             },
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_settings,
                 "DEFAULT_CODEX_AGENT_MODEL",
                 "deepseek-v4-pro",
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_settings,
                 "DEFAULT_CODEX_AGENT_REASONING_EFFORT",
                 "max",
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "start_codex_agent",
                 return_value=(
                     "tele-agent:codex.0",
@@ -721,11 +752,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 ),
             ) as start_agent,
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "managed_codex_agent_present",
                 return_value=True,
             ),
-            mock.patch.object(telegram_inbox, "send_reply"),
+            mock.patch.object(_relay_transport, "send_reply"),
         ):
             telegram_inbox.handle_update(
                 update,
@@ -761,14 +792,14 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 32,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/restart_agent spark",
             },
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "start_codex_agent",
                 return_value=(
                     "tele-agent:codex.0",
@@ -777,11 +808,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 ),
             ) as start_agent,
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "managed_codex_agent_present",
                 return_value=True,
             ),
-            mock.patch.object(telegram_inbox, "send_reply"),
+            mock.patch.object(_relay_transport, "send_reply"),
         ):
             telegram_inbox.handle_update(
                 update,
@@ -815,14 +846,14 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 33,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/restart_agent ds-flash",
             },
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "start_codex_agent",
                 return_value=(
                     "tele-agent:codex.0",
@@ -831,11 +862,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 ),
             ) as start_agent,
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "managed_codex_agent_present",
                 return_value=True,
             ),
-            mock.patch.object(telegram_inbox, "send_reply"),
+            mock.patch.object(_relay_transport, "send_reply"),
         ):
             telegram_inbox.handle_update(
                 update,
@@ -868,18 +899,18 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 33,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456},
                 "text": "/kill_agent",
             },
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "stop_codex_agent",
                 return_value=("Stopped the Codex agent.", {"agent_id": "old-agent"}),
             ) as stop_agent,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update, args, {}, "token", "123", self.root / "kill.jsonl"
@@ -903,9 +934,9 @@ class TelegramUsageLimitTests(unittest.TestCase):
             codex_window="codex",
         )
         with (
-            mock.patch.object(telegram_inbox, "start_codex_agent") as start_agent,
+            mock.patch.object(_relay_lifecycle, "start_codex_agent") as start_agent,
             mock.patch.object(
-                telegram_inbox, "registered_codex_process_running"
+                _relay_processes, "registered_codex_process_running"
             ) as process_probe,
         ):
             relay_failure = telegram_inbox.ensure_codex_target_for_agent_message(
@@ -938,19 +969,19 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 35,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456},
                 "text": "/restart_agent max",
             },
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "managed_codex_agent_present",
                 return_value=False,
             ),
-            mock.patch.object(telegram_inbox, "start_codex_agent") as start_agent,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_lifecycle, "start_codex_agent") as start_agent,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update, args, {}, "token", "123", self.root / "restart.jsonl"
@@ -978,19 +1009,19 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 37,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456},
                 "text": "/start_agent",
             },
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "managed_codex_agent_present",
                 return_value=True,
             ),
-            mock.patch.object(telegram_inbox, "start_codex_agent") as start_agent,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_lifecycle, "start_codex_agent") as start_agent,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update, args, {}, "token", "123", self.root / "start.jsonl"
@@ -1005,16 +1036,16 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
     def test_live_reasoning_selector_changes_effort_without_restart(self) -> None:
         with (
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
-            mock.patch.object(telegram_inbox, "tmux_pane_has_codex_process", return_value=True),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
-            mock.patch.object(telegram_inbox, "wait_for_tmux_text", return_value="selector"),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_pane_has_codex_process", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "wait_for_tmux_text", return_value="selector"),
             mock.patch.object(
-                telegram_inbox,
+                _relay_models,
                 "current_codex_model_and_reasoning_effort",
                 return_value=("gpt-5.6-sol", "max"),
             ),
-            mock.patch.object(telegram_inbox, "current_codex_reasoning_effort", return_value="max"),
+            mock.patch.object(_relay_models, "current_codex_reasoning_effort", return_value="max"),
         ):
             selected = telegram_inbox.set_codex_reasoning_effort(
                 "tele-agent:codex.0", "max"
@@ -1047,18 +1078,18 @@ class TelegramUsageLimitTests(unittest.TestCase):
             return expected
 
         with (
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "wait_for_tmux_text",
                 side_effect=selector_text,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_models,
                 "current_codex_model_and_reasoning_effort",
                 return_value=("gpt-5.3-codex-spark", "high"),
             ),
@@ -1080,6 +1111,47 @@ class TelegramUsageLimitTests(unittest.TestCase):
             send_keys.call_args_list,
         )
 
+    def test_live_model_selector_switches_to_astra_without_restart(self) -> None:
+        def selector_text(_target: str, expected: str, timeout: float = 5.0) -> str:
+            if expected == "Select Model and Effort":
+                return (
+                    "  1. gpt-5.6-sol (current)\n"
+                    "› 2. gpt-6-astra\n"
+                )
+            return expected
+
+        with (
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
+            mock.patch.object(
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
+            ),
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
+            mock.patch.object(
+                _relay_processes,
+                "wait_for_tmux_text",
+                side_effect=selector_text,
+            ),
+            mock.patch.object(
+                _relay_models,
+                "current_codex_model_and_reasoning_effort",
+                return_value=(telegram_inbox.ASTRA_CODEX_AGENT_MODEL, "high"),
+            ),
+        ):
+            selected = telegram_inbox.set_codex_model(
+                "tele-agent:codex.0",
+                "astra",
+            )
+
+        self.assertEqual(
+            selected, (telegram_inbox.ASTRA_CODEX_AGENT_MODEL, "high")
+        )
+        self.assertEqual(
+            send_keys.call_args_list.count(
+                mock.call("tele-agent:codex.0", "Down")
+            ),
+            3,
+        )
+
     def test_live_model_selector_switches_to_ds_flash_without_restart(self) -> None:
         def selector_text(_target: str, expected: str, timeout: float = 5.0) -> str:
             if expected == "Select Model and Effort":
@@ -1091,18 +1163,18 @@ class TelegramUsageLimitTests(unittest.TestCase):
             return expected
 
         with (
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "wait_for_tmux_text",
                 side_effect=selector_text,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_models,
                 "current_codex_model_and_reasoning_effort",
                 return_value=("deepseek-v4-flash", "max"),
             ),
@@ -1131,13 +1203,13 @@ class TelegramUsageLimitTests(unittest.TestCase):
             return expected
 
         with (
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys"),
+            mock.patch.object(_relay_processes, "tmux_send_keys"),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "wait_for_tmux_text",
                 side_effect=selector_text,
             ),
@@ -1163,7 +1235,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 40,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/model spark",
             },
@@ -1171,11 +1243,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
         log_path = self.root / "model.jsonl"
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_models,
                 "set_codex_model",
                 return_value=("gpt-5.3-codex-spark", "high"),
             ) as set_model,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
             mock.patch.object(
                 telegram_inbox.agent_registry,
                 "active_agent_for_pane",
@@ -1220,7 +1292,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 41,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/reasoning high",
             },
@@ -1228,9 +1300,9 @@ class TelegramUsageLimitTests(unittest.TestCase):
         log_path = self.root / "listener.jsonl"
         with (
             mock.patch.object(
-                telegram_inbox, "set_codex_reasoning_effort", return_value="high"
+                _relay_models, "set_codex_reasoning_effort", return_value="high"
             ) as set_reasoning,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
             mock.patch.object(
                 telegram_inbox.agent_registry, "active_agent_for_pane", return_value=None
             ),
@@ -1267,7 +1339,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(telegram_inbox.time, "time", return_value=session_started + 3660),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             sent = telegram_inbox.drain_codex_agent_messages(
                 "token",
@@ -1313,7 +1385,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             },
         )
 
-        with mock.patch.object(telegram_inbox, "send_reply") as send_reply:
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
             sent = telegram_inbox.drain_codex_agent_messages(
                 "token",
                 "123",
@@ -1356,7 +1428,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(telegram_inbox.time, "time", return_value=session_started + 60),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             sent = telegram_inbox.drain_codex_agent_messages(
                 "token",
@@ -1398,7 +1470,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 "time",
                 return_value=session_started + 3600,
             ),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             sent = telegram_inbox.drain_codex_agent_messages(
                 "token",
@@ -1440,7 +1512,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         )
         message_state = self.root / "messages.state.json"
 
-        with mock.patch.object(telegram_inbox, "send_reply") as send_reply:
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
             sent = telegram_inbox.drain_codex_agent_messages(
                 "token",
                 "123",
@@ -1454,6 +1526,57 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(sent, 1)
         self.assertIn("new schema response", send_reply.call_args.args[2])
         self.assertTrue(send_reply.call_args.args[2].endswith(" ∎"))
+
+    def test_duplicate_agent_message_schemas_are_forwarded_once(self) -> None:
+        session_started = telegram_inbox.iso_timestamp_epoch("2026-07-17T00:00:00Z")
+        assert session_started is not None
+        self.meta.update(
+            {
+                "created_ts": session_started,
+                "launch_source": "start_codex_agent.sh",
+            }
+        )
+        self._write_records(
+            {
+                "type": "event_msg",
+                "payload": {
+                    "type": "item_completed",
+                    "item": {
+                        "type": "AgentMessage",
+                        "id": "msg_same",
+                        "content": [{"type": "Text", "text": "one response"}],
+                        "phase": "final_answer",
+                    },
+                },
+            },
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "id": "msg_same",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "one response"}],
+                    "phase": "final_answer",
+                },
+            },
+        )
+        message_state = self.root / "messages.state.json"
+
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
+            sent = telegram_inbox.drain_codex_agent_messages(
+                "token",
+                "123",
+                self.meta,
+                message_state,
+                None,
+                {},
+                sessions_root=self.sessions,
+            )
+
+        self.assertEqual(sent, 1)
+        send_reply.assert_called_once()
+        state = telegram_inbox.read_json_object(message_state)
+        self.assertEqual(state["last_message_id"], "msg_same")
 
     def test_invalid_saved_offset_tails_instead_of_replaying(self) -> None:
         self._write_records(
@@ -1476,7 +1599,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             },
         )
 
-        with mock.patch.object(telegram_inbox, "send_reply") as send_reply:
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
             sent = telegram_inbox.drain_codex_agent_messages(
                 "token",
                 "123",
@@ -1655,25 +1778,25 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 2,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "are you there?",
             },
         }
         log_path = self.root / "listener.jsonl"
         with (
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "ensure_codex_target_for_agent_message",
                 return_value=None,
             ) as ensure,
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "paste_to_tmux",
                 return_value="relayed to tele-agent:codex.0; submission confirmed",
             ) as paste,
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=False),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=False),
             mock.patch.object(
                 telegram_inbox.agent_registry,
                 "active_agent_for_pane",
@@ -1717,7 +1840,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 11,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/codex_reset",
             },
@@ -1739,12 +1862,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_auth,
                 "inspect_codex_live_usage",
                 return_value=live_usage,
             ),
-            mock.patch.object(telegram_inbox, "list_codex_usage_resets", return_value=(2, entries)),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_auth, "list_codex_usage_resets", return_value=(2, entries)),
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(update, args, {}, "token", "123", log_path)
         send_reply.assert_called_once()
@@ -1775,7 +1898,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 11,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/codex_reset",
             },
@@ -1790,12 +1913,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_auth,
                 "inspect_codex_live_usage",
                 return_value=live_usage,
             ),
-            mock.patch.object(telegram_inbox, "list_codex_usage_resets", return_value=(0, [])),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_auth, "list_codex_usage_resets", return_value=(0, [])),
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(update, args, {}, "token", "123", log_path)
         outgoing = send_reply.call_args.args[2]
@@ -1823,11 +1946,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertIn("not a workspace credit", text)
 
     def test_live_usage_propagates_fresh_account_query_failure(self) -> None:
-        with mock.patch.object(
-            telegram_inbox.codex_rate_limits,
-            "read_rate_limits",
-            side_effect=telegram_inbox.codex_rate_limits.RateLimitError(
-                "fresh query failed"
+        with (
+            mock.patch.object(_relay_processes, "codex_executable", return_value="/fixture/codex"),
+            mock.patch.object(
+                telegram_inbox.codex_rate_limits, "read_rate_limits",
+                side_effect=telegram_inbox.codex_rate_limits.RateLimitError("fresh query failed"),
             ),
         ):
             with self.assertRaisesRegex(RuntimeError, "fresh query failed"):
@@ -1884,7 +2007,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 13,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/codex_usage",
             },
@@ -1899,11 +2022,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
         log_path = self.root / "listener.jsonl"
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_auth,
                 "inspect_codex_live_usage",
                 return_value=live_usage,
             ) as inspect,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update,
@@ -1963,7 +2086,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 "agent_id": "agent-test",
             },
         )
-        with mock.patch.object(telegram_inbox, "send_reply") as send_reply:
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
             sent = telegram_inbox.notify_codex_usage_failure(
                 "token",
                 "123",
@@ -2006,7 +2129,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             },
         )
         with mock.patch.object(
-            telegram_inbox,
+            _relay_transport,
             "send_reply",
             side_effect=RuntimeError("network unavailable"),
         ):
@@ -2048,7 +2171,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 41,
                 "date": 1_900_000_000,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/start_agent",
             },
@@ -2056,12 +2179,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
         log_path = self.root / "listener.jsonl"
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "managed_codex_agent_present",
                 return_value=False,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "start_codex_agent",
                 return_value=(
                     "tele-agent:codex.0",
@@ -2069,7 +2192,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                     {"agent_id": "agent-live"},
                 ),
             ) as start_agent,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
             mock.patch.object(
                 telegram_inbox.agent_registry,
                 "append_agent_event",
@@ -2117,7 +2240,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 21,
                 "date": now,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456, "username": "tester"},
                 "text": "/Confirm",
             },
@@ -2125,12 +2248,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
         log_path = self.root / "listener.jsonl"
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_auth,
                 "run_codex_reset_helper",
                 return_value=(0, "RESET_SUCCESS\n", ""),
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "start_codex_agent",
                 return_value=(
                     "tele-agent:codex.0",
@@ -2138,7 +2261,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                     {"agent_id": "new-agent"},
                 ),
             ) as start_agent,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(update, args, {}, "token", "123", log_path)
         start_agent.assert_called_once_with(
@@ -2183,19 +2306,19 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "message": {
                 "message_id": 23,
                 "date": now,
-                "chat": {"id": "123", "type": "private"},
+                "chat": {"id": "123"},
                 "from": {"id": 456},
                 "text": "/Confirm",
             },
         }
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_auth,
                 "run_codex_reset_helper",
                 return_value=(0, "RESET_SUCCESS\n", ""),
             ),
-            mock.patch.object(telegram_inbox, "start_codex_agent") as start_agent,
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_lifecycle, "start_codex_agent") as start_agent,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update, args, {}, "token", "123", self.root / "reset-stopped.jsonl"
@@ -2231,7 +2354,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "RESET=Full reset  Expires 02:13 on 13 Aug 2026.\n"
         )
         with mock.patch.object(
-            telegram_inbox,
+            _relay_auth,
             "run_codex_reset_helper",
             return_value=(0, output, ""),
         ):
@@ -2262,17 +2385,17 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "registered_codex_process_running",
                 return_value=False,
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
-            mock.patch.object(telegram_inbox, "tmux_pane_command", return_value="codex"),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_pane_command", return_value="codex"),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
             mock.patch.object(
-                telegram_inbox, "codex_session_checkpoint", return_value=checkpoint
+                _relay_submission, "codex_session_checkpoint", return_value=checkpoint
             ),
             mock.patch.object(telegram_inbox.subprocess, "run", side_effect=fake_run),
         ):
@@ -2302,17 +2425,17 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "registered_codex_process_running",
                 return_value=False,
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
-            mock.patch.object(telegram_inbox, "tmux_pane_command", return_value="codex"),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_pane_command", return_value="codex"),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
             mock.patch.object(
-                telegram_inbox, "codex_session_checkpoint", return_value=checkpoint
+                _relay_submission, "codex_session_checkpoint", return_value=checkpoint
             ),
             mock.patch.object(telegram_inbox.subprocess, "run", side_effect=fake_run),
         ):
@@ -2363,7 +2486,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "registered_codex_process_running",
                 return_value=True,
             ),
@@ -2373,12 +2496,17 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 return_value=meta,
             ),
             mock.patch.object(
-                telegram_inbox,
+                telegram_inbox.agent_registry,
+                "refresh_codex_session_link",
+                return_value=meta,
+            ),
+            mock.patch.object(
+                _relay_submission,
                 "codex_session_checkpoint",
                 return_value=(self.session, self.session.stat().st_size),
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
                 return_value="absent",
             ),
@@ -2420,17 +2548,17 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "registered_codex_process_running",
                 return_value=False,
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
-            mock.patch.object(telegram_inbox, "tmux_pane_command", return_value="codex"),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_pane_command", return_value="codex"),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
             mock.patch.object(
-                telegram_inbox, "codex_session_checkpoint", return_value=checkpoint
+                _relay_submission, "codex_session_checkpoint", return_value=checkpoint
             ),
             mock.patch.object(telegram_inbox.subprocess, "run", side_effect=fake_run),
         ):
@@ -2471,10 +2599,10 @@ class TelegramUsageLimitTests(unittest.TestCase):
             return mock.Mock(returncode=0)
 
         with (
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
-            mock.patch.object(telegram_inbox, "tmux_pane_command", return_value="codex"),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_pane_command", return_value="codex"),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
             mock.patch.object(
                 telegram_inbox.agent_registry,
@@ -2482,7 +2610,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 return_value=meta,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "codex_session_checkpoint",
                 side_effect=[None, checkpoint],
             ),
@@ -2505,13 +2633,13 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "[TELEGRAM USER MESSAGE message_id=781 from @tester | 456] hello"
         )
         with (
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
-            mock.patch.object(telegram_inbox, "tmux_pane_command", return_value="codex"),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_pane_command", return_value="codex"),
             mock.patch.object(
-                telegram_inbox, "tmux_pane_has_codex_process", return_value=True
+                _relay_processes, "tmux_pane_has_codex_process", return_value=True
             ),
             mock.patch.object(
-                telegram_inbox, "codex_session_checkpoint", return_value=None
+                _relay_submission, "codex_session_checkpoint", return_value=None
             ),
             mock.patch.object(
                 telegram_inbox.agent_registry,
@@ -2686,21 +2814,21 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 return_value=meta,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
                 return_value="absent",
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "codex_process_identity",
                 return_value="200:2000",
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
             mock.patch.object(
-                telegram_inbox, "tmux_paste_text_atomic"
+                _relay_submission, "tmux_paste_text_atomic"
             ) as paste_text,
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "wait_for_codex_bootstrap_submission",
                 return_value=(True, (self.session, 0)),
             ),
@@ -2769,12 +2897,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
                 return_value="composer",
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "tmux_send_keys",
                 side_effect=submit_pending_message,
             ) as send_keys,
@@ -2809,6 +2937,71 @@ class TelegramUsageLimitTests(unittest.TestCase):
             ],
         )
 
+    def test_pending_relay_confirms_marker_in_replacement_rollout(self) -> None:
+        marker = "[TELEGRAM USER MESSAGE message_id=801"
+        pending_state = self.root / "relay-confirmation.state.json"
+        log_path = self.root / "listener.jsonl"
+        old_session = self.sessions / "old-rollout.jsonl"
+        old_session.write_text("", encoding="utf-8")
+        self._write_records(
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": marker}],
+                },
+            }
+        )
+        telegram_inbox.write_json_object(
+            pending_state,
+            {
+                "pending": [
+                    {
+                        "agent_id": "agent-test",
+                        "created_ts": 100.0,
+                        "marker": marker,
+                        "message_id": 801,
+                        "offset": 0,
+                        "session_path": str(old_session),
+                        "target_pane": "tele-agent:codex.0",
+                    }
+                ],
+                "version": 1,
+            },
+        )
+        active_meta = {
+            "agent_id": "agent-test",
+            "codex_session_path": str(self.session),
+        }
+
+        with (
+            mock.patch.object(
+                telegram_inbox.agent_registry,
+                "active_agent_for_pane",
+                return_value=active_meta,
+            ),
+            mock.patch.object(
+                telegram_inbox.agent_registry,
+                "refresh_codex_session_link",
+                return_value=active_meta,
+            ),
+        ):
+            result = telegram_inbox.reconcile_pending_codex_submissions(
+                pending_state,
+                log_path=log_path,
+                now=120.0,
+            )
+
+        self.assertEqual(result["pending"], [])
+        self.assertEqual(len(result["confirmed"]), 1)
+        self.assertEqual(
+            result["confirmed"][0]["session_path"], str(self.session)
+        )
+        event = json.loads(log_path.read_text(encoding="utf-8"))
+        self.assertEqual(event["event"], "telegram_relay_submission_confirmed")
+        self.assertEqual(event["session_path"], str(self.session))
+
     def test_pending_relay_keeps_retrying_without_false_stall(self) -> None:
         marker = "[TELEGRAM USER MESSAGE message_id=83"
         pending_state = self.root / "relay-confirmation.state.json"
@@ -2824,11 +3017,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
                 return_value="composer",
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
         ):
             first = telegram_inbox.reconcile_pending_codex_submissions(
                 pending_state,
@@ -2887,15 +3080,15 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "codex_session_turn_active",
                 return_value=True,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
             ) as pane_location,
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
         ):
             result = telegram_inbox.reconcile_pending_codex_submissions(
                 pending_state,
@@ -2931,11 +3124,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
                 return_value="composer",
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
         ):
             result = telegram_inbox.reconcile_pending_codex_submissions(
                 pending_state,
@@ -2967,11 +3160,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
                 return_value="history",
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
         ):
             result = telegram_inbox.reconcile_pending_codex_submissions(
                 pending_state,
@@ -3025,11 +3218,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
                 side_effect=["composer", "history"],
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
         ):
             result = telegram_inbox.reconcile_pending_codex_submissions(
                 pending_state,
@@ -3085,7 +3278,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 return_value=meta,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "codex_process_identity",
                 return_value="100:1000",
             ),
@@ -3102,7 +3295,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 return_value=meta,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "codex_process_identity",
                 return_value="200:2000",
             ),
@@ -3122,7 +3315,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 return_value=meta,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "codex_process_identity",
                 return_value="200:2000",
             ),
@@ -3148,11 +3341,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "pending_codex_submission_pane_location",
                 return_value="absent",
             ),
-            mock.patch.object(telegram_inbox, "tmux_send_keys") as send_keys,
+            mock.patch.object(_relay_processes, "tmux_send_keys") as send_keys,
         ):
             result = telegram_inbox.reconcile_pending_codex_submissions(
                 pending_state,
@@ -3163,6 +3356,132 @@ class TelegramUsageLimitTests(unittest.TestCase):
         send_keys.assert_not_called()
         self.assertEqual(result["retried"], [])
         self.assertEqual(len(result["pending"]), 1)
+
+    def test_stale_missing_pending_is_quarantined_after_idle_grace(self) -> None:
+        marker = "[TELEGRAM USER MESSAGE message_id=810"
+        pending_state = self.root / "relay-confirmation.state.json"
+        self._write_records(
+            {
+                "type": "event_msg",
+                "payload": {"type": "task_complete"},
+            }
+        )
+        telegram_inbox.register_pending_codex_submission(
+            pending_state,
+            (self.session, 0),
+            marker,
+            "tele-agent:codex.0",
+            now=100.0,
+            process_identity="100:1000",
+        )
+
+        with (
+            mock.patch.object(
+                _relay_submission,
+                "pending_codex_submission_pane_location",
+                return_value="absent",
+            ),
+            mock.patch.object(
+                _relay_submission,
+                "codex_session_turn_active",
+                return_value=False,
+            ),
+            mock.patch.object(
+                _relay_processes,
+                "codex_process_identity",
+                return_value="100:1000",
+            ),
+            mock.patch.object(telegram_inbox.time, "time", return_value=250.0),
+        ):
+            moved = telegram_inbox._fail_stale_pending_codex_submissions(
+                pending_state,
+                "tele-agent:codex.0",
+                reason="stale_pending_cleared",
+                older_than=telegram_inbox.RELAY_PENDING_WEDGE_SECONDS,
+            )
+
+        self.assertEqual(moved, 1)
+        state = telegram_inbox.read_json_object(pending_state)
+        self.assertEqual(state["pending"], [])
+        self.assertEqual(len(state["failed"]), 1)
+        self.assertEqual(state["failed"][0]["message_id"], 810)
+        self.assertEqual(
+            state["failed"][0]["stalled_reason"], "stale_pending_cleared"
+        )
+
+    def test_stale_pending_in_composer_is_not_quarantined(self) -> None:
+        marker = "[TELEGRAM USER MESSAGE message_id=811"
+        pending_state = self.root / "relay-confirmation.state.json"
+        telegram_inbox.register_pending_codex_submission(
+            pending_state,
+            (self.session, 0),
+            marker,
+            "tele-agent:codex.0",
+            now=100.0,
+            process_identity="100:1000",
+        )
+
+        with (
+            mock.patch.object(
+                _relay_submission,
+                "pending_codex_submission_pane_location",
+                return_value="composer",
+            ),
+            mock.patch.object(
+                _relay_submission,
+                "codex_session_turn_active",
+                return_value=False,
+            ),
+            mock.patch.object(telegram_inbox.time, "time", return_value=250.0),
+        ):
+            moved = telegram_inbox._fail_stale_pending_codex_submissions(
+                pending_state,
+                "tele-agent:codex.0",
+                reason="stale_pending_cleared",
+                older_than=telegram_inbox.RELAY_PENDING_WEDGE_SECONDS,
+            )
+
+        self.assertEqual(moved, 0)
+        state = telegram_inbox.read_json_object(pending_state)
+        self.assertEqual(len(state["pending"]), 1)
+        self.assertEqual(state["failed"], [])
+
+    def test_stale_missing_pending_is_not_quarantined_during_active_turn(self) -> None:
+        marker = "[TELEGRAM USER MESSAGE message_id=812"
+        pending_state = self.root / "relay-confirmation.state.json"
+        telegram_inbox.register_pending_codex_submission(
+            pending_state,
+            (self.session, 0),
+            marker,
+            "tele-agent:codex.0",
+            now=100.0,
+            process_identity="100:1000",
+        )
+
+        with (
+            mock.patch.object(
+                _relay_submission,
+                "pending_codex_submission_pane_location",
+                return_value="absent",
+            ),
+            mock.patch.object(
+                _relay_submission,
+                "codex_session_turn_active",
+                return_value=True,
+            ),
+            mock.patch.object(telegram_inbox.time, "time", return_value=250.0),
+        ):
+            moved = telegram_inbox._fail_stale_pending_codex_submissions(
+                pending_state,
+                "tele-agent:codex.0",
+                reason="stale_pending_cleared",
+                older_than=telegram_inbox.RELAY_PENDING_WEDGE_SECONDS,
+            )
+
+        self.assertEqual(moved, 0)
+        state = telegram_inbox.read_json_object(pending_state)
+        self.assertEqual(len(state["pending"]), 1)
+        self.assertEqual(state["failed"], [])
 
     def test_composer_detection_requires_marker_in_latest_prompt(self) -> None:
         item = {
@@ -3177,14 +3496,14 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 "active_agent_for_pane",
                 return_value=meta,
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "tmux_pane_has_codex_process",
                 return_value=True,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_notify,
                 "run_short",
                 return_value=(
                     "› [TELEGRAM USER MESSAGE message_id=82 from @tester] hello\n"
@@ -3198,7 +3517,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 "composer",
             )
             self.assertTrue(telegram_inbox.pending_codex_submission_in_composer(item))
-            capture_command = telegram_inbox.run_short.call_args.args[0]
+            capture_command = _relay_notify.run_short.call_args.args[0]
             self.assertIn("-S", capture_command)
             self.assertIn("-", capture_command)
 
@@ -3208,14 +3527,14 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 "active_agent_for_pane",
                 return_value=meta,
             ),
-            mock.patch.object(telegram_inbox, "tmux_target_exists", return_value=True),
+            mock.patch.object(_relay_processes, "tmux_target_exists", return_value=True),
             mock.patch.object(
-                telegram_inbox,
+                _relay_processes,
                 "tmux_pane_has_codex_process",
                 return_value=True,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_notify,
                 "run_short",
                 return_value=(
                     "› [TELEGRAM USER MESSAGE message_id=82 from @tester] hello\n"

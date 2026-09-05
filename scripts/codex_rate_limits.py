@@ -30,7 +30,7 @@ def read_rate_limits(
             [codex_bin, "app-server"],
             text=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
             stdin=subprocess.PIPE,
             cwd=workdir,
             env={**os.environ, "CODEX_HOME": str(codex_home)},
@@ -111,6 +111,8 @@ def read_rate_limits(
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout=5)
+        reader.join(timeout=1)
+        process.stdout.close()
 
     if isinstance(response.get("error"), dict):
         error = response["error"]

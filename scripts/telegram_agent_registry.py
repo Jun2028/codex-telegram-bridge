@@ -93,10 +93,9 @@ def append_jsonl(path: Path, record: dict[str, Any]) -> None:
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     assert_safe_local_path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    tmp.replace(path)
+    # Imported lazily so the registry remains usable as a standalone CLI.
+    from teleagent.state import write_json_object
+    write_json_object(path, payload)
 
 
 def read_json(path: Path) -> dict[str, Any] | None:
@@ -122,6 +121,16 @@ def codex_session_metadata(session_path: Path) -> dict[str, Any]:
     except OSError:
         return {}
     return {}
+
+
+def codex_session_is_subagent(session_path: Path) -> bool:
+    """Return whether a rollout belongs to a spawned multi-agent worker."""
+    metadata = codex_session_metadata(session_path)
+    return bool(
+        metadata.get("agent_path")
+        or metadata.get("agent_nickname")
+        or metadata.get("multi_agent_version")
+    )
 
 
 def iso_timestamp_epoch(value: Any) -> float | None:
@@ -164,6 +173,36 @@ def launch_requires_fresh_session(meta: dict[str, Any]) -> bool:
     return str(meta.get("launch_source") or "") in NEW_PROCESS_LAUNCH_SOURCES
 
 
+def _same_path(left: str | Path, right: str | Path) -> bool:
+    """Compare paths, including NFS aliases that expose the same inode."""
+    try:
+        return os.path.samefile(left, right)
+    except OSError:
+        pass
+    try:
+        return Path(left).resolve() == Path(right).resolve()
+    except OSError:
+        return False
+
+
+def codex_session_cwd_matches_agent(meta: dict[str, Any], session_cwd: str) -> bool:
+    """Accept the repo cwd or the private empty cwd chat-only agents launch in."""
+    allowed_cwds: list[str] = []
+    repo_root = meta.get("repo_root")
+    if isinstance(repo_root, str) and repo_root.strip():
+        allowed_cwds.append(repo_root)
+    recorded_cwd = meta.get("codex_cwd")
+    if isinstance(recorded_cwd, str) and recorded_cwd.strip():
+        allowed_cwds.append(recorded_cwd)
+    if os.environ.get("TELEAGENT_CODEX_ACCESS_MODE", "full-access") == "chat-only":
+        chat_only_workspace = os.environ.get("TELEAGENT_CHAT_ONLY_WORKDIR")
+        if chat_only_workspace:
+            allowed_cwds.append(chat_only_workspace)
+    return any(
+        _same_path(session_cwd, candidate) for candidate in allowed_cwds
+    )
+
+
 def codex_session_matches_agent(meta: dict[str, Any], session_path: Path) -> bool:
     if not session_path.is_file():
         return False
@@ -177,10 +216,7 @@ def codex_session_matches_agent(meta: dict[str, Any], session_path: Path) -> boo
     repo_root = str(meta.get("repo_root") or "")
     if not session_cwd or not repo_root:
         return False
-    try:
-        if Path(session_cwd).resolve() != Path(repo_root).resolve():
-            return False
-    except OSError:
+    if not codex_session_cwd_matches_agent(meta, session_cwd):
         return False
 
     if not launch_requires_fresh_session(meta):
@@ -304,6 +340,10 @@ def create_agent(
     normalized_home = normalize_codex_home(codex_home)
     if normalized_home is not None:
         meta["codex_home"] = str(normalized_home)
+    if os.environ.get("TELEAGENT_CODEX_ACCESS_MODE", "full-access") == "chat-only":
+        chat_only_workspace = os.environ.get("TELEAGENT_CHAT_ONLY_WORKDIR")
+        if chat_only_workspace:
+            meta["codex_cwd"] = str(Path(chat_only_workspace).resolve())
     write_json(meta_path, meta)
     update_active_pane(meta)
     append_jsonl(index_path(), {"event": "agent_registered", **meta})
@@ -414,10 +454,14 @@ def codex_session_for_pane(
     for pid in closest_codex_pids(root_pid, rows):
         candidates.extend(session_files_open_by_pid(pid))
     if candidates:
+        root_candidates = [
+            path for path in candidates if not codex_session_is_subagent(path)
+        ]
+        eligible = root_candidates or candidates
         if preferred_session_path:
             try:
                 preferred = Path(preferred_session_path).resolve()
-                for candidate in candidates:
+                for candidate in eligible:
                     if candidate.resolve() == preferred:
                         return candidate, "process_fd"
             except OSError:
@@ -432,7 +476,7 @@ def codex_session_for_pane(
                 path.stat().st_mtime,
             )
 
-        return min(candidates, key=session_start_key), "process_fd"
+        return min(eligible, key=session_start_key), "process_fd"
     return None, "process_fd_not_found"
 
 
@@ -440,13 +484,7 @@ def codex_newest_session_for_pane(
     target_pane: str,
     codex_home: str | Path | None = None,
 ) -> tuple[Path | None, str]:
-    """Return the most recently written rollout held open by the pane's Codex.
-
-    A goal-mode agent may resume an older thread while its registry link still
-    names a newer helper rollout. The newest-written open rollout is where its
-    current replies actually land, so relay drains should prefer it over a
-    stale linked path.
-    """
+    """Return the newest rollout held open by the pane's root Codex process."""
     root_pid = tmux_pane_pid(target_pane)
     if root_pid is None:
         return None, "tmux_pane_pid_unavailable"
@@ -460,36 +498,13 @@ def codex_newest_session_for_pane(
             for path in session_files_open_by_pid(pid)
             if any(path_is_within(path, root) for root in session_roots)
         )
-    newest: Path | None = None
+    root_candidates = [
+        path for path in candidates if not codex_session_is_subagent(path)
+    ]
     try:
-        newest = max(candidates, key=lambda path: path.stat().st_mtime)
+        newest = max(root_candidates, key=lambda path: path.stat().st_mtime)
     except (OSError, ValueError):
-        newest = None
-
-    # A resumed goal thread is not always discoverable through open FDs
-    # (sub-process boundaries hide it). Fall back to the most recently
-    # written rollout across every Codex home this pane may use.
-    recent_cutoff = time.time() - 900
-    seen: set[Path] = set()
-    for root in session_roots:
-        if not root.is_dir():
-            continue
-        try:
-            for path in root.rglob("*.jsonl"):
-                try:
-                    if path in seen:
-                        continue
-                    seen.add(path)
-                    if path.stat().st_mtime < recent_cutoff:
-                        continue
-                    if newest is None or path.stat().st_mtime > newest.stat().st_mtime:
-                        newest = path
-                except OSError:
-                    continue
-        except OSError:
-            continue
-    if newest is None:
-        return None, "session_not_found"
+        return None, "process_fd_not_found"
     return newest, "process_fd_newest"
 
 
@@ -523,7 +538,7 @@ def codex_session_with_latest_user_message(
                     mtime = path.stat().st_mtime
                 except OSError:
                     continue
-                if mtime >= cutoff:
+                if mtime >= cutoff and not codex_session_is_subagent(path):
                     recent.append((mtime, path))
         except OSError:
             continue
@@ -598,7 +613,7 @@ def codex_session_roots_for_pane(
                 if home is not None
             ]
     if not homes:
-        homes = [Path.home() / ".codex"]
+        homes = [Path.home() / ".codex", Path.home() / ".codex-personal"]
 
     roots: list[Path] = []
     seen: set[Path] = set()
@@ -632,6 +647,7 @@ def recent_codex_session(
     else:
         bases = {
             Path.home() / ".codex" / "sessions",
+            Path.home() / ".codex-personal" / "sessions",
         }
     if not any(base.exists() for base in bases):
         return None, "sessions_dir_missing"
@@ -647,12 +663,13 @@ def recent_codex_session(
             >= start_epoch - SESSION_START_SLOP_SECONDS
         ]
     if repo_root is not None:
-        expected_root = Path(repo_root).resolve()
         files = [
             path
             for path in files
-            if str(codex_session_metadata(path).get("cwd") or "")
-            and Path(str(codex_session_metadata(path)["cwd"])).resolve() == expected_root
+            if codex_session_cwd_matches_agent(
+                {"repo_root": str(repo_root)},
+                str(codex_session_metadata(path).get("cwd") or ""),
+            )
         ]
     if not files:
         return None, "mtime_fallback_not_found"

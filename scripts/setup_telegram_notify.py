@@ -277,7 +277,7 @@ def main() -> int:
             "--title",
             "notify live test",
             "--message",
-            "Bridge Telegram notification test",
+            "Tele-agent Telegram notification test",
         ],
         check=False,
     )

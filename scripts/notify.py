@@ -162,7 +162,7 @@ def build_multipart(
     file_field: str,
     file_path: Path,
 ) -> tuple[bytes, str]:
-    boundary = f"----codex-telegram-bridge-{int(time.time())}-{os.getpid()}"
+    boundary = f"----tele-agent-{int(time.time())}-{os.getpid()}"
     mime_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
     chunks: list[bytes] = []
 
@@ -250,18 +250,30 @@ def send_telegram(
 
 def telegram_safe_message(title: str, message: str) -> str:
     """Keep Telegram operational notifications readable and log-free."""
-    if "summary:" in message and not any(
-        marker in message
-        for marker in (
-            "command:",
-            "last log lines:",
-            "qstat:",
-            "tmux:",
-            "scratch filesystem df",
-            "scratch usage",
-        )
-    ):
-        return message
+    if "summary:" in message:
+        before, summary = message.split("summary:", 1)
+        fields = {}
+        for line in before.splitlines():
+            if ":" in line:
+                key, value = line.split(":", 1)
+                fields[key.strip()] = value.strip()
+        result = fields.get("status", "Update").capitalize()
+        if fields.get("exit_status") not in (None, "", "0"):
+            result += " (exit " + fields["exit_status"] + ")"
+        details = [result] + [fields[key] for key in ("runtime", "host") if fields.get(key)]
+        lines = [" · ".join(details)]
+        if fields.get("finished_at"):
+            lines.append("Finished: " + fields["finished_at"])
+        if fields.get("pbs_jobid"):
+            lines.append("Job: " + fields["pbs_jobid"])
+        for raw in summary.splitlines():
+            line = raw.strip().lstrip("- ")
+            if not line or any(marker in line.lower() for marker in ("traceback", "command:", "[info]", "[debug]", "[error]", "qstat:", "tmux:")):
+                continue
+            lines.append(line[:220])
+            if len(lines) >= 6:
+                break
+        return "\n".join(lines)
 
     command_markers = (
         "command:",

@@ -17,7 +17,7 @@ source "$SCRIPT_DIR/relay_paths.sh"
 SESSION="${TELEAGENT_TMUX_SESSION:-tele-agent}"
 WINDOW="reporter"
 INTERVAL="${TELEAGENT_REPORT_INTERVAL_SECONDS:-1800}"
-TITLE="bridge heartbeat"
+TITLE="tele-agent heartbeat"
 RESTART=0
 DRY_RUN=0
 

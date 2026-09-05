@@ -13,10 +13,16 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
 import telegram_inbox  # noqa: E402
+from teleagent import lifecycle as _relay_lifecycle
+from teleagent import submission as _relay_submission
+from teleagent import transport as _relay_transport
 
 
 class TelegramTimedMessageTests(unittest.TestCase):
     def setUp(self) -> None:
+        checkpoint = mock.patch.object(_relay_submission, "codex_session_checkpoint", return_value=None)
+        checkpoint.start()
+        self.addCleanup(checkpoint.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -31,7 +37,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
         self.message = {
             "message_id": 4197,
             "date": 1_785_116_720,
-            "chat": {"id": "123", "type": "private"},
+            "chat": {"id": "123"},
             "from": {"id": 456, "username": "tester", "first_name": "Test"},
             "text": "/timed 0.5 check the goal agent now",
             "reply_to_message": {
@@ -123,7 +129,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
         update = {"update_id": 88, "message": self.message}
         with (
             mock.patch.object(telegram_inbox.time, "time", return_value=1000.0),
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
         ):
             telegram_inbox.handle_update(
                 update,
@@ -276,7 +282,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
         self._schedule()
         args = self._handle_args()
         list_message = self._message(4202, "/timed list")
-        with mock.patch.object(telegram_inbox, "send_reply") as send_reply:
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
             telegram_inbox.handle_update(
                 {"update_id": 89, "message": list_message},
                 args,
@@ -293,7 +299,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
 
         self.log_path.unlink()
         remove_message = self._message(4203, "/timed remove 1")
-        with mock.patch.object(telegram_inbox, "send_reply") as send_reply:
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
             telegram_inbox.handle_update(
                 {"update_id": 90, "message": remove_message},
                 args,
@@ -321,7 +327,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
         )
         args = self._handle_args()
         remove_message = self._message(4204, "/timed remove")
-        with mock.patch.object(telegram_inbox, "send_reply") as send_reply:
+        with mock.patch.object(_relay_transport, "send_reply") as send_reply:
             telegram_inbox.handle_update(
                 {"update_id": 91, "message": remove_message},
                 args,
@@ -368,22 +374,22 @@ class TelegramTimedMessageTests(unittest.TestCase):
 
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "ensure_codex_target_for_agent_message",
                 return_value=None,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "codex_session_checkpoint",
                 return_value=checkpoint,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "paste_to_tmux",
                 side_effect=confirmed_relay,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_transport,
                 "send_reply",
                 side_effect=visible_echo,
             ) as send_reply,
@@ -427,11 +433,11 @@ class TelegramTimedMessageTests(unittest.TestCase):
             {"blocked": True, "reason": "refresh_token_revoked"},
         )
         with (
-            mock.patch.object(telegram_inbox, "send_reply") as send_reply,
+            mock.patch.object(_relay_transport, "send_reply") as send_reply,
             mock.patch.object(
-                telegram_inbox, "ensure_codex_target_for_agent_message"
+                _relay_lifecycle, "ensure_codex_target_for_agent_message"
             ) as ensure_target,
-            mock.patch.object(telegram_inbox, "paste_to_tmux") as paste,
+            mock.patch.object(_relay_submission, "paste_to_tmux") as paste,
         ):
             telegram_inbox.process_due_timed_messages(
                 self.args,
@@ -456,17 +462,17 @@ class TelegramTimedMessageTests(unittest.TestCase):
         checkpoint = (self.session, 0)
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "ensure_codex_target_for_agent_message",
                 return_value=None,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "codex_session_checkpoint",
                 return_value=checkpoint,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "paste_to_tmux",
                 return_value=(
                     "relayed to tele-agent:codex.0 "
@@ -474,7 +480,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
                 ),
             ) as relay,
             mock.patch.object(
-                telegram_inbox,
+                _relay_transport,
                 "send_reply",
                 return_value={"message_id": 5002},
             ) as send_reply,
@@ -548,9 +554,9 @@ class TelegramTimedMessageTests(unittest.TestCase):
             )
 
         with (
-            mock.patch.object(telegram_inbox, "paste_to_tmux") as relay,
+            mock.patch.object(_relay_submission, "paste_to_tmux") as relay,
             mock.patch.object(
-                telegram_inbox,
+                _relay_transport,
                 "send_reply",
                 return_value={"message_id": 5003},
             ) as send_reply,
@@ -569,7 +575,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
         send_reply.assert_called_once()
         self.assertEqual(self._state_task()["status"], "delivered")
 
-    def test_restart_recovery_retries_unconfirmed_delivery_after_grace(self) -> None:
+    def test_restart_recovery_does_not_repeat_an_uncertain_delivery(self) -> None:
         self._schedule()
         state = telegram_inbox.read_json_object(self.state)
         task = state["tasks"][0]
@@ -586,17 +592,17 @@ class TelegramTimedMessageTests(unittest.TestCase):
         checkpoint = (self.session, 0)
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "ensure_codex_target_for_agent_message",
                 return_value=None,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "codex_session_checkpoint",
                 return_value=checkpoint,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_submission,
                 "paste_to_tmux",
                 return_value=(
                     "relayed to tele-agent:codex.0 "
@@ -604,7 +610,7 @@ class TelegramTimedMessageTests(unittest.TestCase):
                 ),
             ) as relay,
             mock.patch.object(
-                telegram_inbox,
+                _relay_transport,
                 "send_reply",
                 return_value={"message_id": 5004},
             ) as send_reply,
@@ -619,24 +625,24 @@ class TelegramTimedMessageTests(unittest.TestCase):
                 now=2800.0,
             )
 
-        relay.assert_called_once()
-        send_reply.assert_called_once()
-        self.assertEqual(self._state_task()["status"], "delivered")
+        relay.assert_not_called()
+        send_reply.assert_not_called()
+        self.assertEqual(self._state_task()["status"], "failed")
 
     def test_visible_echo_failure_prevents_codex_delivery_and_retries(self) -> None:
         self._schedule()
         with (
             mock.patch.object(
-                telegram_inbox,
+                _relay_lifecycle,
                 "ensure_codex_target_for_agent_message",
                 return_value=None,
             ),
             mock.patch.object(
-                telegram_inbox,
+                _relay_transport,
                 "send_reply",
                 side_effect=telegram_inbox.TransientTelegramError("offline"),
             ),
-            mock.patch.object(telegram_inbox, "paste_to_tmux") as relay,
+            mock.patch.object(_relay_submission, "paste_to_tmux") as relay,
         ):
             telegram_inbox.process_due_timed_messages(
                 self.args,
