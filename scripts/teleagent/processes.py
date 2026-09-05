@@ -322,6 +322,11 @@ def relay_codex_control(target_pane: str, text: str, submit_delay: float) -> str
 
 def tmux_send_keys(target_pane: str, *keys: str, literal: bool = False) -> None:
     restore_tmux_socket_from_env()
+    if (
+        not literal and "Enter" in keys
+        and _submission.codex_model_switch_prompt_visible(target_pane)
+    ):
+        raise subprocess.SubprocessError("automatic model-switch selection blocked")
     command = ["tmux", "send-keys", "-t", target_pane]
     if literal:
         command.append("-l")

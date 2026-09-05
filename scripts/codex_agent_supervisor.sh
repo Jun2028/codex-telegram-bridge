@@ -114,6 +114,8 @@ while [[ "$stop_requested" -eq 0 ]]; do
     --model "$MODEL"
     -c "model_reasoning_effort=\"$REASONING_EFFORT\""
     -c "check_for_update_on_startup=$CHECK_FOR_UPDATE_ON_STARTUP"
+    # A relayed Enter must never accept the low-quota model-switch popup.
+    -c "notice.hide_rate_limit_model_nudge=true"
     --no-alt-screen
   )
   if [[ "$ACCESS_MODE" == "chat-only" ]]; then

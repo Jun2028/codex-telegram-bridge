@@ -57,6 +57,15 @@ see [delivery guarantees](architecture.md).
 The last actual `turn_context` is the authority for the model shown in status.
 Before the first turn, status may fall back to the configured/live selector.
 
+Managed launches disable Codex's low-quota model-switch reminder with
+`notice.hide_rate_limit_model_nudge=true`. Automated relay input and Enter
+retries refuse the "Approaching rate limits" model selector. Low quota must
+not change the model; use the explicit model controls to change it.
+
+Goal status is read from the bound session's persistent goal database. It
+includes paused, usage-limited, budget-limited and complete states; unavailable
+state is shown as unknown, never inferred from terminal text.
+
 Changes within the same Codex home preserve the conversation. Moving to another
 provider home relaunches the agent with a fresh chat. `/restart_agent MODEL LEVEL`
 is the explicit way to restart with selected options.

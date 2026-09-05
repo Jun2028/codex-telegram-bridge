@@ -39,6 +39,11 @@ class TelegramUsageLimitTests(unittest.TestCase):
         )
         active_agent.start()
         self.addCleanup(active_agent.stop)
+        pane = mock.patch.object(
+            _relay_processes, "tmux_tail", return_value="› Ask Codex to do anything"
+        )
+        pane.start()
+        self.addCleanup(pane.stop)
         telegram_inbox.REGISTERED_CODEX_PID_CACHE.clear()
         self.root = Path(self.temp.name)
         self.repo = self.root / "repo"

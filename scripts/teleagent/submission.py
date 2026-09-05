@@ -589,6 +589,13 @@ def reconcile_pending_codex_submissions(
             and checked_ts - last_recovery_ts >= max(0.0, recovery_interval_seconds)
         )
 
+        if (
+            recovery_due and target_pane
+            and codex_model_switch_prompt_visible(str(target_pane))
+        ):
+            still_pending.append(item)
+            continue
+
         pane_location = (
             pending_codex_submission_pane_location(item)
             if not item.get("stalled_ts") and recovery_due
@@ -888,6 +895,16 @@ def reconcile_pending_codex_submissions(
     }
 
 
+def codex_model_switch_prompt_visible(target_pane: str) -> bool:
+    """Recognize the quota popup whose default Enter action changes models."""
+    tail = _processes.tmux_tail(target_pane, lines=24)
+    return (
+        "Approaching rate limits" in tail
+        and "Switch to " in tail
+        and "Keep current model" in tail
+    )
+
+
 def paste_to_tmux(
     target_pane: str,
     text: str,
@@ -915,6 +932,9 @@ def paste_to_tmux(
             f"not relayed: target {target_pane} is a shell pane ({current_command}). "
             "Start Codex/agent in that pane first, then send the Telegram message again."
         )
+
+    if codex_running and codex_model_switch_prompt_visible(target_pane):
+        return "not relayed: Codex model-switch prompt is open; automatic selection blocked"
 
     marker_match = (
         _settings.TELEGRAM_USER_MESSAGE_MARKER_RE.search(text) if press_enter else None
@@ -972,6 +992,17 @@ def paste_to_tmux(
         # A short pause makes the following Enter behave like a user submit.
         if submit_delay > 0:
             time.sleep(submit_delay)
+        if codex_running and codex_model_switch_prompt_visible(target_pane):
+            if marker is not None and pending_state_path is not None:
+                register_pending_codex_submission(
+                    pending_state_path,
+                    checkpoint,
+                    marker,
+                    target_pane,
+                    relay_text=text,
+                    process_identity=submitting_process_identity,
+                )
+            return "not relayed: Codex model-switch prompt is open; automatic selection blocked"
         subprocess.run(
             ["tmux", "send-keys", "-t", target_pane, "Enter"],
             check=True,
@@ -991,7 +1022,10 @@ def paste_to_tmux(
                 marker,
                 timeout=max(0.0, confirmation_timeout),
             )
-        if marker is not None and not confirmed and confirmation_timeout > 0:
+        if (
+            marker is not None and not confirmed and confirmation_timeout > 0
+            and not codex_model_switch_prompt_visible(target_pane)
+        ):
             # Enter can land during the brief transition after a Codex turn
             # finishes and leave the complete message in the composer.  Retry
             # the submit key once, without clearing or repasting any text.  If
