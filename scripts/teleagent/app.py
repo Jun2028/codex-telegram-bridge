@@ -320,7 +320,7 @@ def main() -> int:
             "Telegram is not configured. Run scripts/setup_telegram_notify.py first."
         )
     owner_user_id = str(
-        env_value(env, "TELEAGENT_OWNER_USER_ID", "TELEAGENT_OWNER_ID") or ""
+        env_value(env, "TELEAGENT_OWNER_USER_ID", "TELEAGENT_OWNER_ID") or chat_id
     ).strip()
     bot_username = (
         str(env_value(env, "TELEAGENT_BOT_USERNAME", "TELEGRAM_BOT_USERNAME") or "")
@@ -335,6 +335,29 @@ def main() -> int:
 
     offset_path = _state.state_path(repo_root, args.state_file)
     log_path = _state.state_path(repo_root, args.log_jsonl)
+
+    def refresh_bot_identity():
+        nonlocal owner_user_id, bot_username
+        if bot_username:
+            return
+        try:
+            owner_user_id, bot_username = _routing.resolve_bot_identity(
+                token, chat_id, owner_user_id, bot_username
+            )
+            _state.append_jsonl(
+                log_path, {"ts": int(time.time()), "event": "bot_identity_discovered"}
+            )
+        except Exception as exc:
+            _state.append_jsonl(
+                log_path,
+                {
+                    "ts": int(time.time()),
+                    "event": "bot_identity_discovery_failed",
+                    "error": _transport.short_error(exc, env),
+                },
+            )
+
+    refresh_bot_identity()
     _identity.backfill_per_chat_inbox_records(log_path)
     inbound_documents_dir = _state.state_path(repo_root, args.inbound_documents_dir)
     args.inbound_documents_dir = str(inbound_documents_dir)
@@ -924,6 +947,7 @@ def main() -> int:
             ("confirmations", 2, reconcile_current_relay_confirmations),
             ("queue", 1, drain_current_relay_queue),
             ("usage", 10, maintain_current_codex_usage),
+            ("identity", 60, refresh_bot_identity),
             ("auth", 10, maintain_current_codex_auth),
             ("timers", 2, deliver_due_timed_messages),
         ):

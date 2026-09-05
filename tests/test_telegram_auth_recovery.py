@@ -370,6 +370,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
                 return_value={
                     "TELEAGENT_BOT_TOKEN": "token",
                     "TELEAGENT_CHAT_ID": "123",
+                    "TELEAGENT_BOT_USERNAME": "OurBot",
                 },
             ),
             mock.patch.object(_relay_app, "get_updates", return_value=[]),
@@ -426,6 +427,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
                 return_value={
                     "TELEAGENT_BOT_TOKEN": "token",
                     "TELEAGENT_CHAT_ID": "123",
+                    "TELEAGENT_BOT_USERNAME": "OurBot",
                 },
             ),
             mock.patch.object(_relay_app, "get_updates", return_value=[]),
@@ -504,6 +506,7 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
                 return_value={
                     "TELEAGENT_BOT_TOKEN": "token",
                     "TELEAGENT_CHAT_ID": "123",
+                    "TELEAGENT_BOT_USERNAME": "OurBot",
                 },
             ),
             mock.patch.object(_relay_app, "get_updates", return_value=[]),

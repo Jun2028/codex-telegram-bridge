@@ -128,7 +128,7 @@ def _send_reply_chunk(
         "parse_mode": "HTML",
         "disable_web_page_preview": "true",
         "reply_markup": json.dumps(
-            _settings.QUICK_ACTIONS_KEYBOARD, separators=(",", ":")
+            _settings.REPLY_KEYBOARD_REMOVAL, separators=(",", ":")
         ),
     }
     if message_thread_id is not None:

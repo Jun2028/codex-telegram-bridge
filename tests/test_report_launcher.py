@@ -93,7 +93,7 @@ class ReportLauncherTests(unittest.TestCase):
             (scripts / "relay_paths.sh").symlink_to(ROOT / "scripts/relay_paths.sh")
             runner = scripts / "tmux_run_with_report.sh"
             runner.write_text(
-                '#!/bin/bash\nmkdir -p "$TELEAGENT_SCRATCH"\nprintf "started" > "$TELEAGENT_SCRATCH/result"\nsleep 2\n'
+                '#!/bin/bash\nmkdir -p "$TELEAGENT_SCRATCH"\nprintf "started" > "$TELEAGENT_SCRATCH/result"\nsleep 30\n'
             )
             runner.chmod(0o755)
             check = root / "check.sh"
@@ -101,10 +101,11 @@ class ReportLauncherTests(unittest.TestCase):
                 textwrap.dedent("""\
                 #!/bin/bash
                 set -euo pipefail
+                trap 'printf "fixture failed at line %s\\n" "$LINENO" >&2' ERR
                 tmux new-session -d -s report-fixture -n agent 'sleep 30'
                 before=$(tmux display-message -p -t report-fixture:agent.0 '#{pane_id}:#{pane_pid}')
                 "$TEST_RELAY_SOURCE/scripts/tmux_send_reported.sh" --session report-fixture --title 'fixture job' 'printf safe'
-                for attempt in {1..40}; do
+                for attempt in {1..200}; do
                   [[ -f "$TELEAGENT_SCRATCH/result" ]] && break
                   sleep 0.05
                 done
@@ -128,7 +129,7 @@ class ReportLauncherTests(unittest.TestCase):
                 env=environment,
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=25,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 

@@ -45,8 +45,9 @@ a separate message. Changing between provider homes starts a fresh conversation.
 
 ## Groups and private messages
 
-Add the bot to a group and configure `TELEAGENT_OWNER_USER_ID` and
-`TELEAGENT_BOT_USERNAME` in its secret configuration. Address the exact bot
+Add the bot to a group. It discovers its username through Telegram and uses
+the configured private chat to identify its owner. Optional identity overrides
+are `TELEAGENT_OWNER_USER_ID` and `TELEAGENT_BOT_USERNAME`. Address the exact bot
 username, use `/status@YourBot`, or reply to a message from that bot. Captions
 and forum topics work too. Other bots with similar names are ignored.
 

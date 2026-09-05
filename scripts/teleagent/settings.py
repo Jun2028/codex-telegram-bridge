@@ -102,10 +102,7 @@ DEFAULT_MAX_INBOUND_PHOTO_BYTES = 10 * 1024 * 1024
 SUPPORTED_INBOUND_DOCUMENT_SUFFIXES = {".pdf", ".txt", ".md", ".html", ".htm"}
 
 
-QUICK_ACTIONS_KEYBOARD = {
-    "keyboard": [["/status"]],
-    "resize_keyboard": True,
-}
+REPLY_KEYBOARD_REMOVAL = {"remove_keyboard": True}
 
 
 TRANSIENT_HTTP_CODES = {409, 429, 500, 502, 503, 504}

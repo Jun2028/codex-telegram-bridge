@@ -71,13 +71,12 @@ class TelegramFormattingTests(unittest.TestCase):
         self.assertEqual(params["parse_mode"], "HTML")
         self.assertEqual(params["text"], "<b>bold</b>")
 
-    def test_send_reply_attaches_quick_action_keyboard(self) -> None:
+    def test_send_reply_removes_the_persistent_reply_keyboard(self) -> None:
         with mock.patch.object(_relay_transport, "telegram_api") as api:
             telegram_inbox.send_reply("token", "123", "hello")
         params = api.call_args.args[2]
         keyboard = json.loads(params["reply_markup"])
-        self.assertEqual(keyboard["keyboard"], [["/status"]])
-        self.assertTrue(keyboard["resize_keyboard"])
+        self.assertEqual(keyboard, {"remove_keyboard": True})
 
     def test_send_reply_falls_back_to_plain_text_on_format_error(self) -> None:
         with mock.patch.object(

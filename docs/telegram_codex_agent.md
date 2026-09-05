@@ -61,8 +61,11 @@ is the explicit way to restart with selected options.
 
 ## Groups, replies and topics
 
-Set `TELEAGENT_OWNER_USER_ID` and `TELEAGENT_BOT_USERNAME` in the instance's
-secret configuration. Mention the exact bot, use an addressed command such as
+The relay discovers its username using Telegram getMe and identifies the owner
+from the configured private chat. Existing `TELEAGENT_OWNER_USER_ID` and
+`TELEAGENT_BOT_USERNAME` overrides are respected. Discovery failures retry
+automatically while private controls remain available. Mention the exact bot,
+use an addressed command such as
 `/status@YourBot`, or reply to that bot. Captions are recognized. With
 `TELEAGENT_REQUIRE_GROUP_MENTION=0`, the owner's unaddressed group messages are
 also accepted; keep the default when several bots share a group.
