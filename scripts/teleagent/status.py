@@ -4,8 +4,10 @@ from __future__ import annotations
 
 
 import argparse
+from contextlib import closing
 import json
 import socket
+import sqlite3
 import time
 from datetime import datetime
 from pathlib import Path
@@ -49,6 +51,42 @@ def codex_session_start_epoch(session_path: str | None) -> float | None:
         return agent_registry.iso_timestamp_epoch(record.get("timestamp"))
     except (OSError, json.JSONDecodeError):
         return None
+
+
+def codex_session_goal_status(session_path: str | Path | None) -> str:
+    """Read the bound thread's persistent goal, without inspecting terminal prose."""
+    if not session_path:
+        return "unknown"
+    path = Path(session_path)
+    try:
+        with path.open(encoding="utf-8") as handle:
+            record = json.loads(handle.readline())
+        if record.get("type") != "session_meta":
+            return "unknown"
+        thread_id = record["payload"]["id"]
+        # Both live and archived rollouts belong to their own Codex home.
+        session_root = next(
+            parent
+            for parent in path.parents
+            if parent.name in {"sessions", "archived_sessions"}
+        )
+        db = session_root.parent / "goals_1.sqlite"
+        with closing(
+            sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.2)
+        ) as conn:
+            row = conn.execute(
+                "SELECT status FROM thread_goals WHERE thread_id = ?", (thread_id,)
+            ).fetchone()
+        if row is None:
+            return "off"
+        status = row[0]
+        if status in {
+            "active", "paused", "blocked", "usage_limited", "budget_limited", "complete"
+        }:
+            return status
+    except (OSError, ValueError, KeyError, TypeError, StopIteration, sqlite3.Error):
+        pass
+    return "unknown"
 
 
 def codex_session_context_snapshot(
@@ -264,19 +302,7 @@ def format_system_status(
     )
     if auth_failure:
         activity = "sign-in required — /reauth in private"
-    # Expose Goal mode explicitly in Telegram status.
-    if process == "codex":
-        try:
-            if _processes.codex_goal_blocked(target_pane):
-                goal_text = "blocked"
-            elif _processes.codex_goal_active(target_pane):
-                goal_text = "active"
-            else:
-                goal_text = "off"
-        except (OSError, RuntimeError):
-            goal_text = "unknown"
-    else:
-        goal_text = "off"
+    goal_text = codex_session_goal_status(session_path)
     lines = [
         f"{socket.gethostname()} · {now}",
         f"state: {desired} · {activity}",

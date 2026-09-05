@@ -333,6 +333,7 @@ class ChatOnlyConfigTests(unittest.TestCase):
 
             args = args_path.read_text(encoding="utf-8").splitlines()
             self.assertIn("--strict-config", args)
+            self.assertIn("notice.hide_rate_limit_model_nudge=true", args)
             self.assertNotIn("--sandbox", args)
             self.assertNotIn("danger-full-access", args)
             self.assertNotIn("--ask-for-approval", args)

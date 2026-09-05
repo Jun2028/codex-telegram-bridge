@@ -71,6 +71,7 @@ scripts/telegram_inbox_supervisor.sh
 scripts/tmux_isolated_test.sh
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
+tests/test_goal_status_and_model_guard.py
 tests/test_deepseek_provider.py
 tests/test_failure_reporting.py
 tests/test_listener_deployment.py
