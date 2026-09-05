@@ -264,9 +264,23 @@ def format_system_status(
     )
     if auth_failure:
         activity = "sign-in required — /reauth in private"
+    # Expose Goal mode explicitly in Telegram status.
+    if process == "codex":
+        try:
+            if _processes.codex_goal_blocked(target_pane):
+                goal_text = "blocked"
+            elif _processes.codex_goal_active(target_pane):
+                goal_text = "active"
+            else:
+                goal_text = "off"
+        except (OSError, RuntimeError):
+            goal_text = "unknown"
+    else:
+        goal_text = "off"
     lines = [
         f"{socket.gethostname()} · {now}",
         f"state: {desired} · {activity}",
+        f"goal mode: {goal_text}",
         f"model: {model_text}",
         f"auth: {auth_text}",
         f"uptime: {uptime_text}",
