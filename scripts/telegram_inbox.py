@@ -98,10 +98,12 @@ LEGACY_REPLY_PREFIX_RE = re.compile(r"^(?:ACK|PROGRESS|FINAL):\s*", re.IGNORECAS
 TELEGRAM_USER_MESSAGE_MARKER_RE = re.compile(
     r"\[TELEGRAM USER MESSAGE message_id=(\d+)\b"
 )
-LATEST_OPENAI_CODEX_AGENT_MODEL = "gpt-5.6-sol"
+ASTRA_CODEX_AGENT_MODEL = "gpt-6-astra"
+SOL_CODEX_AGENT_MODEL = "gpt-5.6-sol"
+LATEST_OPENAI_CODEX_AGENT_MODEL = ASTRA_CODEX_AGENT_MODEL
 LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT = "high"
 DEFAULT_CODEX_AGENT_MODEL = os.environ.get(
-    "TELEAGENT_CODEX_MODEL", LATEST_OPENAI_CODEX_AGENT_MODEL
+    "TELEAGENT_CODEX_MODEL", SOL_CODEX_AGENT_MODEL
 )
 DEFAULT_CODEX_AGENT_REASONING_EFFORT = os.environ.get(
     "TELEAGENT_CODEX_REASONING_EFFORT",
@@ -111,6 +113,8 @@ SPARK_CODEX_AGENT_MODEL = "gpt-5.3-codex-spark"
 DEEPSEEK_FLASH_CODEX_AGENT_MODEL = "deepseek-v4-flash"
 DEEPSEEK_PRO_CODEX_AGENT_MODEL = "deepseek-v4-pro"
 SUPPORTED_CODEX_AGENT_MODELS = {
+    ASTRA_CODEX_AGENT_MODEL,
+    SOL_CODEX_AGENT_MODEL,
     LATEST_OPENAI_CODEX_AGENT_MODEL,
     DEFAULT_CODEX_AGENT_MODEL,
     SPARK_CODEX_AGENT_MODEL,
@@ -120,7 +124,8 @@ SUPPORTED_CODEX_AGENT_MODELS = {
 CODEX_AGENT_MODEL_ALIASES = {
     "default": DEFAULT_CODEX_AGENT_MODEL,
     "latest": LATEST_OPENAI_CODEX_AGENT_MODEL,
-    "sol": LATEST_OPENAI_CODEX_AGENT_MODEL,
+    "astra": ASTRA_CODEX_AGENT_MODEL,
+    "sol": SOL_CODEX_AGENT_MODEL,
     "spark": SPARK_CODEX_AGENT_MODEL,
     "ds-flash": DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
     "ds-pro": DEEPSEEK_PRO_CODEX_AGENT_MODEL,
@@ -141,6 +146,7 @@ SUPPORTED_CODEX_REASONING_EFFORTS = {
     "max",
     "ultra",
 }
+ASTRA_CODEX_REASONING_EFFORTS = frozenset({"low", "medium", "high", "xhigh", "max"})
 LIVE_CODEX_REASONING_EFFORTS = {
     "low": 0,
     "medium": 1,
@@ -3865,19 +3871,23 @@ def normalize_codex_agent_model(value: str, *, live: bool = False) -> str:
     if model not in supported:
         if live:
             raise ValueError(
-                "unknown model; use latest (gpt-5.6-sol), "
-                "spark (gpt-5.3-codex-spark), or "
+                "unknown model; use latest/astra (gpt-6-astra), "
+                "sol (gpt-5.6-sol), spark (gpt-5.3-codex-spark), or "
                 "ds-flash (deepseek-v4-flash) / ds-pro (deepseek-v4-pro)"
             )
         raise ValueError(
-            "unknown model; use latest (gpt-5.6-sol), "
-            "spark (gpt-5.3-codex-spark), or "
+            "unknown model; use latest/astra (gpt-6-astra), "
+            "sol (gpt-5.6-sol), spark (gpt-5.3-codex-spark), or "
             "ds-flash (deepseek-v4-flash) / ds-pro (deepseek-v4-pro)"
         )
     return model
 
 
 def validate_model_reasoning_effort(model: str, effort: str) -> None:
+    if model == ASTRA_CODEX_AGENT_MODEL and effort not in ASTRA_CODEX_REASONING_EFFORTS:
+        raise ValueError(
+            "GPT-6 Astra reasoning must be low, medium, high, xhigh, or max"
+        )
     if model == SPARK_CODEX_AGENT_MODEL and effort not in {
         "low",
         "medium",
@@ -3896,7 +3906,8 @@ def parse_live_model_payload(payload: str) -> tuple[str, str | None]:
         raise ValueError(f"invalid quoting: {exc}") from exc
     if not 1 <= len(tokens) <= 2:
         raise ValueError(
-            "usage: /model latest|spark|ds-flash|ds-pro [low|medium|high|xhigh|max|ultra]"
+            "usage: /model latest|astra|sol|spark|ds-flash|ds-pro "
+            "[low|medium|high|xhigh|max|ultra]"
         )
     model = normalize_codex_agent_model(tokens[0], live=True)
     reasoning_effort = (
@@ -5849,20 +5860,21 @@ def handle_update(
             "/kill_agent — stop the agent; keep this listener online\n"
             "/restart_agent [MODEL] [LEVEL] — replace a running agent with a "
             "fresh chat (context is not preserved)\n"
-            "/model latest|spark|ds-flash|ds-pro [LEVEL] — switch model; preserve the current chat\n"
+            "/model latest|astra|sol|spark|ds-flash|ds-pro [LEVEL] — switch model; preserve the current chat\n"
             "/reasoning LEVEL — change the running chat without restarting\n"
             "/agent_status — agent, authentication, and live Codex usage\n\n"
             "Lifecycle commands never accept prompts. With MODEL omitted, the "
             "configured default is used. Explicit latest always selects "
             f"{LATEST_OPENAI_CODEX_AGENT_MODEL} with "
-            f"reasoning={LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT}; spark "
+            f"reasoning={LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT}; astra is "
+            "an explicit alias for gpt-6-astra, sol selects gpt-5.6-sol, and spark "
             "selects gpt-5.3-codex-spark only when explicit. "
             "ds-flash/ds-pro select deepseek-v4-flash / deepseek-v4-pro and "
             "relaunch the agent under the DeepSeek harness (max reasoning "
             "only). If /model ds-flash or ds-pro fails on an OpenAI pane, run "
             "/restart_agent ds-flash or /restart_agent ds-pro first. "
             "LEVEL is one of: none, minimal, low, medium, high, xhigh, max, ultra. "
-            "Spark supports low through xhigh.\n\n"
+            "Astra supports low through max; Spark supports low through xhigh.\n\n"
             "**Messages and control**\n"
             "Normal text or PDF/TXT/MD → running agent\n"
             "Quick-action button above the input: /status\n"
