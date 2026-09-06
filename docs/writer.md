@@ -9,6 +9,11 @@ planning, and the overall review cycle. The writer can inspect sources and make
 targeted checks while drafting, but does not take over that entire workflow.
 A local revision needs the passage and a specific editing instruction.
 
+The writer develops prose paragraph by paragraph, checking sentence meaning,
+logical continuity, necessity, and fit with the entire piece as it goes. It
+revises empty or self-justifying passages before proceeding and reads the whole
+draft before delivery. These checks stay out of the finished text.
+
 Copy `config/writer.config.toml.example` to `$CODEX_HOME/writer.config.toml`
 (normally `~/.codex/writer.config.toml`). Set `model_instructions_file` to the
 absolute path of `config/writer.md` in this checkout.
