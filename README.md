@@ -1,6 +1,6 @@
 # Codex Telegram Bridge
 
-Control a coding agent on your machine from Telegram. Send a task, follow its
+Control a persistent agent on your machine from Telegram. Send a task, follow its
 progress, inspect waiting work, change models, and retrieve results from your
 phone. Text, code, PDF/TXT/MD/HTML documents, photos and local voice transcription
 are supported.
@@ -8,6 +8,33 @@ are supported.
 **One bot = one persistent agent and one conversation.** Private chats, groups
 and forum topics use that agent. Each turn keeps the chat and topic that started
 it; a message from another chat waits instead of redirecting the reply.
+
+## A persistent coordinator, temporary specialists
+
+The bot keeps the conversation: your intent, approved decisions, and the place
+where results should return. For substantial tasks it can delegate a bounded
+assignment to a specialist with its own instructions and a fresh context. A
+writer needs the draft and the author's brief; it does not need the bot's
+unrelated debugging history or terse Telegram personality.
+
+The handoff matters as much as the role. Preserve the user's relevant words,
+separate approved decisions from the coordinator's suggestions, and supply
+selected source material. The specialist returns the actual artifact, sources
+used, and unresolved issues. The coordinator reviews that work and responds in
+the original conversation. A completion message alone is not a useful result.
+
+The wrapper includes a tool-free **writer** using **GPT-6 Astra / high** for
+exposition and substantive editing. Each run saves its input snapshots and
+report in a private directory belonging to the bot instance. It uses a separate
+Codex home and an explicit model, with no fallback retry. Ordinary questions
+can still be answered directly. Full-access bots receive the delegation guide
+on their next managed launch; chat-only bots retain their tool restrictions.
+
+For example, ask: “Use the writer specialist to draft from this approved
+outline and these sources, then review the result against my instructions.”
+See [specialist roles and handoffs](docs/specialists.md) for the runner, role
+configuration, and current limits. Specialist outputs are never automatically
+sent to Telegram or published.
 
 ## Use it from your phone
 

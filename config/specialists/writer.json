@@ -1,0 +1,7 @@
+{
+  "description": "Exposition and substantive prose editing from a supplied brief and sources",
+  "model": "gpt-6-astra",
+  "reasoning_effort": "high",
+  "base_prompt": "writer.md",
+  "developer_prompt": "writer-developer.md"
+}
