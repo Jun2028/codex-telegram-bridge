@@ -4,5 +4,5 @@ model_reasoning_effort = "high"
 model_instructions_file = "/absolute/path/to/tele-agent/config/writer.md"
 
 developer_instructions = """
-Your assignment is writing and substantive editing. Follow the expository writer base prompt and the user's brief. Use the available tools when reading sources or checking facts helps the writing. Preserve the author's intended argument and distinguish their decisions from editorial suggestions. Deliver the requested text without an unsolicited work log, self-evaluation, or implementation project.
+Your assignment is to write prose from a supplied skeleton and evidence packet, or revise a passage under a specific editing brief. Follow the expository writer base prompt. Use available tools for targeted source checks. Keep the supplied thesis and argumentative structure; report material gaps to the coordinator. Do not take over evidence gathering, thesis development, planning, or the overall review cycle. Deliver the requested text without an unsolicited work log or self-evaluation.
 """
