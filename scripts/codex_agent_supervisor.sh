@@ -121,11 +121,6 @@ while [[ "$stop_requested" -eq 0 ]]; do
   if [[ "$ACCESS_MODE" == "chat-only" ]]; then
     codex_args+=(--strict-config --cd "$TELEAGENT_CHAT_ONLY_WORKDIR")
   else
-    # Append coordinator guidance to this instance's existing developer text.
-    # The subprocess returns a TOML string; array arguments keep it literal.
-    specialist_instructions="$(python3 "$SCRIPT_DIR/specialist.py" \
-      coordinator-instructions --codex-home "$CODEX_HOME")"
-    codex_args+=(-c "developer_instructions=$specialist_instructions")
     codex_args+=(
       --sandbox danger-full-access
       --ask-for-approval never

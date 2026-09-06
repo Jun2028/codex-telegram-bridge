@@ -1,6 +1,6 @@
 # Codex Telegram Bridge
 
-Control a persistent agent on your machine from Telegram. Send a task, follow its
+Control a coding agent on your machine from Telegram. Send a task, follow its
 progress, inspect waiting work, change models, and retrieve results from your
 phone. Text, code, PDF/TXT/MD/HTML documents, photos and local voice transcription
 are supported.
@@ -9,35 +9,19 @@ are supported.
 and forum topics use that agent. Each turn keeps the chat and topic that started
 it; a message from another chat waits instead of redirecting the reply.
 
-## A persistent coordinator, temporary specialists
+## Separate contexts for substantial work
 
-The bot keeps the conversation: your intent, approved decisions, and the place
-where results should return. For substantial tasks it can delegate a bounded
-assignment to a specialist with its own instructions and a fresh context. A
-writer needs the draft and the author's brief; it does not need the bot's
-unrelated debugging history or terse Telegram personality.
+The persistent tele-agent keeps the conversation and the user's decisions.
+When a task benefits from a different context, it can delegate to a fresh
+Codex session with an appropriate prompt, then review the result before
+replying. A writing session needs the draft, relevant sources, and the author's
+instructions rather than the bot's unrelated conversation history.
 
-The handoff matters as much as the role. Preserve the user's relevant words,
-separate approved decisions from the coordinator's suggestions, and supply
-selected source material. The specialist returns the actual artifact, sources
-used, and unresolved issues. The coordinator reviews that work and responds in
-the original conversation. A completion message alone is not a useful result.
-
-The wrapper includes an evidence-aware **writer** using **GPT-6 Astra / high**
-for exposition and substantive editing. It can inspect local files and
-repositories, view images, follow public web references, and save drafts in its
-own workspace. Source repositories remain outside its writable workspace.
-Each run saves its input snapshots and
-report in a private directory belonging to the bot instance. It uses a separate
-Codex home and an explicit model, with no fallback retry. Ordinary questions
-can still be answered directly. Full-access bots receive the delegation guide
-on their next managed launch; chat-only bots retain their tool restrictions.
-
-For example, ask: “Use the writer specialist to draft from this approved
-outline and these sources, then review the result against my instructions.”
-See [specialist roles and handoffs](docs/specialists.md) for the runner, role
-configuration, and current limits. Specialist outputs are never automatically
-sent to Telegram or published.
+The included [writer profile](docs/writer.md) uses GPT-6 Astra with **high**
+reasoning and prompts focused on coherent exposition. It is a normal Codex
+session: only its prompt, model, and reasoning settings differ. Tools and access
+follow the usual configuration. Simple requests can stay in the main
+conversation; delegation does not require a separate execution framework.
 
 ## Use it from your phone
 
