@@ -23,8 +23,11 @@ selected source material. The specialist returns the actual artifact, sources
 used, and unresolved issues. The coordinator reviews that work and responds in
 the original conversation. A completion message alone is not a useful result.
 
-The wrapper includes a tool-free **writer** using **GPT-6 Astra / high** for
-exposition and substantive editing. Each run saves its input snapshots and
+The wrapper includes an evidence-aware **writer** using **GPT-6 Astra / high**
+for exposition and substantive editing. It can inspect local files and
+repositories, view images, follow public web references, and save drafts in its
+own workspace. Source repositories remain outside its writable workspace.
+Each run saves its input snapshots and
 report in a private directory belonging to the bot instance. It uses a separate
 Codex home and an explicit model, with no fallback retry. Ordinary questions
 can still be answered directly. Full-access bots receive the delegation guide

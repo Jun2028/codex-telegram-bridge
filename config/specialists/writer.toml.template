@@ -1,0 +1,31 @@
+# Generated for an individual writing job. Source repositories are readable;
+# the job's working directory is the only writable project directory.
+__SPECIALIST_MODEL_SETTINGS__
+approval_policy = "never"
+default_permissions = "writer"
+web_search = "live"
+allow_login_shell = false
+developer_instructions = __SPECIALIST_DEVELOPER_INSTRUCTIONS__
+
+[permissions.writer.filesystem]
+":root" = "read"
+":workspace_roots" = "write"
+
+[permissions.writer.network]
+enabled = false
+
+[features]
+shell_tool = true
+unified_exec = true
+view_image = true
+shell_snapshot = false
+apps = false
+plugins = false
+hooks = false
+multi_agent = false
+multi_agent_v2 = false
+goals = false
+
+[shell_environment_policy]
+inherit = "core"
+ignore_default_excludes = false

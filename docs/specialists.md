@@ -31,16 +31,25 @@ Save a Markdown brief containing:
 Select only sources appropriate to the originating chat. A group assignment
 must not receive private conversation material without the owner's permission.
 Do not pass transcripts or raw logs when a reviewed excerpt would suffice.
-The runner accepts UTF-8 text, with a combined 512,000-byte input limit. Retrieve
-and review remote/HPC evidence in the coordinator before supplying excerpts.
-The specialist cannot independently browse, run commands, or inspect files.
+The runner accepts UTF-8 snapshots with a combined 512,000-byte input limit.
+Use `--reference` for local files or directories the writer should inspect
+itself, including a Git checkout or bare evidence repository. These locations
+are recorded in `workspace/references.json`; their contents are live, not frozen
+snapshots. The writer should cite file paths and repository revisions it used.
+
+The writer can read/search local evidence using shell tools, inspect images,
+and search/open public references through the web tool. It can create drafts,
+notes, or extraction scripts inside its job workspace. Command network access
+is disabled, so SSH and network-dependent evidence wrappers cannot run there.
+For remote/HPC sources, provide a local mirror or reviewed excerpts. Public
+web references remain available through the web tool.
 
 ```bash
 scripts/run_specialist.sh list
 scripts/run_specialist.sh run writer \
   --brief /absolute/path/brief.md \
   --source /absolute/path/draft.md \
-  --source /absolute/path/evidence.md
+  --reference /absolute/path/evidence-repository
 ```
 
 Use the repository's absolute script path when running outside its directory.
@@ -60,6 +69,7 @@ Jobs live in `$TELEAGENT_SCRATCH/specialists/writer-<unique-id>/`:
 
 - `brief.md`, source snapshots, and `inputs.json` preserve exact bytes and hashes.
 - `role.json`, `base.md`, and `developer.md` preserve the selected role.
+- `workspace/` holds working drafts, notes, and live reference locations.
 - `result.md` contains the requested text. `report.json` contains the handoff
   summary, sources used, and unresolved issues.
 - `status.json` distinguishes prepared, running, complete, and failed states.
@@ -76,16 +86,23 @@ the artifacts and responds through its existing Telegram route.
 
 ## Isolation and authentication
 
-Each run gets a fresh Codex home, workspace, and tool-disabled configuration.
-The runner sends the selected text directly as input; it imports no conversation
+Each run gets a fresh Codex home, workspace, and writing-specific configuration.
+The runner sends snapshots and reference locations as input; it imports no conversation
 history, repository instructions, skills, plugins, or provider configuration.
 It disables project instruction discovery for this explicitly supplied brief.
+Shell tools use a named writer permission profile: they can read local evidence but
+can write only within the job workspace, excluding the usual extra temporary
+directories. Reference paths are not added as writable roots. This is a write
+boundary, not a read allowlist: the brief identifies the relevant material,
+while the sandbox permits broader local reads. The writer is instructed not to
+inspect unrelated data, publish, contact others, or alter running processes.
+Apps, plugins, hooks, and further delegation remain disabled in this profile.
 The fresh home temporarily links only the owning bot's OpenAI `auth.json`, then
 removes the link after execution. Credentials are never copied into the prompt.
 Other account credential backends and API-key-only setups are not implemented.
 
-This runner requires Python 3.11+ and currently supports OpenAI text specialists
-with no tools. A
+This runner requires Python 3.11+ and currently supports OpenAI writing
+specialists with local evidence tools and web search. A
 DeepSeek-backed coordinator may use it only if that bot's configured OpenAI
 Codex home has usable file authentication. It does not transfer DeepSeek keys
 or change the coordinator's model. Use a compatible Codex CLI; the implementation
@@ -98,8 +115,10 @@ Add a named JSON manifest and two prompt files under `config/specialists/`,
 following `writer.json`. Pin the model and effort. Names contain lowercase
 letters, digits, underscores, or hyphens and begin with a letter. Prompt paths
 must resolve directly inside that directory. Additional roles use the same
-tool-free text/report contract; tool-using researchers or coding workers need
-their own reviewed execution design.
+writing tool configuration and text/report contract. The task brief supplies
+the subject and sources; the role prompt remains general-purpose. Workers that
+need remote command execution or repository mutation require a separate
+execution design.
 
 The supervisor appends `coordinator.md` to existing developer instructions on
 each new full-access managed launch. This applies to main and additional bot

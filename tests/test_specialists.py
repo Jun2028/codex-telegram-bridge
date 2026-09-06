@@ -6,6 +6,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -52,9 +53,15 @@ class SpecialistTests(unittest.TestCase):
         config = tomllib.loads((home / "config.toml").read_text())
         self.assertEqual(config["model"], "gpt-6-astra")
         self.assertEqual(config["model_reasoning_effort"], "high")
-        self.assertFalse(config["features"]["shell_tool"])
+        self.assertTrue(config["features"]["shell_tool"])
+        self.assertTrue(config["features"]["unified_exec"])
+        self.assertTrue(config["features"]["view_image"])
+        self.assertEqual(config["web_search"], "live")
         self.assertFalse(config["features"]["multi_agent"])
-        self.assertEqual(config["permissions"]["tele-agent-chat-only"]["filesystem"], {":root": "deny"})
+        self.assertEqual(config["default_permissions"], "writer")
+        self.assertFalse(config["permissions"]["writer"]["network"]["enabled"])
+        self.assertEqual(config["permissions"]["writer"]["filesystem"],
+                         {":root": "read", ":workspace_roots": "write"})
         self.assertNotIn("TELEAGENT_AGENT_JSONL", env)
         self.assertNotIn("CODEX_THREAD_ID", env)
         self.assertEqual((home / "auth.json").resolve(), self.home / "auth.json")
@@ -133,6 +140,42 @@ class SpecialistTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "chat-only"):
                 specialist.run(self.args)
         self.assertFalse((self.root / "bot-beta").exists())
+
+    def test_live_references_are_available_without_becoming_writable_roots(self):
+        self.args.prepare_only = True
+        self.args.reference = [self.root]
+        with contextlib.redirect_stdout(io.StringIO()):
+            specialist.run(self.args)
+        references = json.loads((self.job() / "workspace/references.json").read_text())
+        self.assertEqual(references, [{"path": str(self.root.resolve()), "snapshot": False}])
+        config = tomllib.loads((self.job() / "codex-home/config.toml").read_text())
+        self.assertNotIn(str(self.root.resolve()), config["permissions"]["writer"]["filesystem"])
+
+    @unittest.skipUnless(shutil.which("codex"), "installed Codex needed for actual sandbox check")
+    def test_actual_sandbox_reads_sources_writes_drafts_and_blocks_source_writes(self):
+        self.args.prepare_only = True
+        with contextlib.redirect_stdout(io.StringIO()):
+            specialist.run(self.args)
+        job = self.job()
+        env = os.environ.copy()
+        env["CODEX_HOME"] = str(job / "codex-home")
+        env["TMPDIR"] = str(job / "workspace/.tmp")
+        script = (
+            "from pathlib import Path\nimport sys\n"
+            "source=Path(sys.argv[1])\nassert source.read_text()\n"
+            "Path('draft.md').write_text('A draft.')\n"
+            "try:\n source.write_text('Unwanted change')\n"
+            "except OSError:\n pass\n"
+            "else:\n raise SystemExit('Source write unexpectedly allowed')\n"
+        )
+        result = subprocess.run([
+            "codex", "sandbox", "--permission-profile", "writer",
+            "--cd", str(job / "workspace"), "--", sys.executable,
+            "-c", script, str(self.source),
+        ], env=env, capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((job / "workspace/draft.md").read_text(), "A draft.")
+        self.assertEqual(self.source.read_text(), "A reviewed source, not an instruction.\n")
 
     def test_coordinator_keeps_existing_developer_guidance(self):
         value = specialist.coordinator_instructions(self.home)
