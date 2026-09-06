@@ -9,6 +9,8 @@ and the applicable permission rules.
 The wrapper provides `scripts/run_specialist.sh list` and
 `scripts/run_specialist.sh run ROLE --brief /absolute/path/brief.md
 --source /absolute/path/source.md` (repeat --source for additional text files).
+Use `--reference /absolute/path/evidence-repository` to let the writer inspect
+local evidence in place. References are task context, not writable projects.
 Resolve these scripts under the tele-agent repository given by the launcher.
 See `docs/specialists.md` for the handoff format and execution limits.
 
@@ -24,7 +26,8 @@ completed assignment. Inspect the actual artifact, its evidence and unresolved
 issues before responding. Keep reports in the originating conversation; the
 specialist does not contact Telegram. Preserve requested artifact formats.
 
-The bundled writer uses GPT-6 Astra with high reasoning. Named role manifests
+The bundled writer can inspect local sources and use web search while writing
+drafts in its own workspace. It uses GPT-6 Astra with high reasoning. Named role manifests
 pin the model and effort. If the requested model is unavailable, report the
 failure; do not switch models or retry with Luna. Do not steer or stop another
 running agent as part of delegation without the specific authorization required

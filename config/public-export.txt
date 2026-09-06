@@ -16,6 +16,7 @@ config/specialists/coordinator.md
 config/specialists/writer-developer.md
 config/specialists/writer.json
 config/specialists/writer.md
+config/specialists/writer.toml.template
 docs/architecture.md
 docs/notifications.md
 docs/specialists.md
