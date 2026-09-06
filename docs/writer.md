@@ -2,8 +2,12 @@
 
 The writer is an ordinary Codex session with a different base prompt and a
 short developer instruction. It uses GPT-6 Astra with high reasoning. The role
-is exposition and substantive editing; the user's brief supplies the subject,
-sources, audience, and requested deliverable.
+is developing prose from a supplied skeleton and evidence packet. The brief
+supplies the thesis, section purposes, intended ending, sources, audience, and
+requested deliverable. The coordinator handles evidence gathering, ideation,
+planning, and the overall review cycle. The writer can inspect sources and make
+targeted checks while drafting, but does not take over that entire workflow.
+A local revision needs the passage and a specific editing instruction.
 
 Copy `config/writer.config.toml.example` to `$CODEX_HOME/writer.config.toml`
 (normally `~/.codex/writer.config.toml`). Set `model_instructions_file` to the
