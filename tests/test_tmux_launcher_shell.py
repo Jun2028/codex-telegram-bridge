@@ -22,6 +22,83 @@ from teleagent import processes as _relay_processes
 
 @unittest.skipUnless(shutil.which("tmux"), "tmux is required")
 class TmuxLauncherShellTests(unittest.TestCase):
+    def test_non_main_instance_inherits_main_deepseek_key_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            fixture_repo = root / "repo"
+            fixture_config = fixture_repo / "config"
+            fixture_config.mkdir(parents=True)
+            main_key = root / "main-deepseek.env"
+            ambient_key = root / "other-instance-deepseek.env"
+            (fixture_config / "relay.env").write_text(
+                f'TELEAGENT_DS_KEY_FILE="{main_key}"\n', encoding="utf-8"
+            )
+            (fixture_config / "relay-beta.env").write_text("", encoding="utf-8")
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TELEAGENT_INSTANCE": "beta",
+                    "TELEAGENT_REPO": str(fixture_repo),
+                    "TELEAGENT_DS_KEY_FILE": str(ambient_key),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"source {REPO_ROOT / 'scripts' / 'relay_paths.sh'} && "
+                    'printf "%s" "$TELEAGENT_DS_KEY_FILE"',
+                ],
+                env=env,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=10,
+            )
+
+            self.assertEqual(result.stdout, str(main_key))
+
+    def test_non_main_instance_can_override_main_deepseek_key_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            fixture_repo = root / "repo"
+            fixture_config = fixture_repo / "config"
+            fixture_config.mkdir(parents=True)
+            main_key = root / "main-deepseek.env"
+            instance_key = root / "beta-deepseek.env"
+            (fixture_config / "relay.env").write_text(
+                f'TELEAGENT_DS_KEY_FILE="{main_key}"\n', encoding="utf-8"
+            )
+            (fixture_config / "relay-beta.env").write_text(
+                f'TELEAGENT_DS_KEY_FILE="{instance_key}"\n', encoding="utf-8"
+            )
+            env = os.environ.copy()
+            env.update(
+                {
+                    "TELEAGENT_INSTANCE": "beta",
+                    "TELEAGENT_REPO": str(fixture_repo),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f"source {REPO_ROOT / 'scripts' / 'relay_paths.sh'} && "
+                    'printf "%s" "$TELEAGENT_DS_KEY_FILE"',
+                ],
+                env=env,
+                check=True,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=10,
+            )
+
+            self.assertEqual(result.stdout, str(instance_key))
+
     def test_non_main_instance_rejects_shared_codex_home(self) -> None:
         with tempfile.TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)

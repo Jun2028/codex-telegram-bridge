@@ -120,7 +120,7 @@ def start_codex_agent(
     agent_codex_home = _processes.codex_home_for_model(model)
     shell_command = _processes.tmux_bash_shell_command()
 
-    if model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+    if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
         prepare_script = repo_root / "scripts" / "prepare_telegram_ds_codex_home.sh"
     elif (
         os.environ.get("TELEAGENT_INSTANCE", "main") != "main"
@@ -130,8 +130,11 @@ def start_codex_agent(
     else:
         prepare_script = None
     if prepare_script is not None:
+        prepare_command = [str(prepare_script)]
+        if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
+            prepare_command += ["--model", model]
         subprocess.run(
-            [str(prepare_script)],
+            prepare_command,
             check=True,
             timeout=30,
         )

@@ -50,9 +50,9 @@ if ! command -v codex >/dev/null 2>&1; then
   exit 1
 fi
 
-if [[ "$CODEX_MODEL" == deepseek-v4-flash || "$CODEX_MODEL" == deepseek-v4-pro ]]; then
+if tele_agent_is_deepseek_model "$CODEX_MODEL"; then
   AGENT_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
-  "$SCRIPT_DIR/prepare_telegram_ds_codex_home.sh" >/dev/null
+  "$SCRIPT_DIR/prepare_telegram_ds_codex_home.sh" --model "$CODEX_MODEL" >/dev/null
 else
   if [[ "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
     AGENT_CODEX_HOME="$TELEAGENT_CHAT_ONLY_CODEX_HOME"
@@ -118,7 +118,7 @@ TARGET_PANE="$SESSION:$WINDOW.0"
 
 if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
   DS_EXTRA=""
-  if [[ "$CODEX_MODEL" == deepseek-v4-flash || "$CODEX_MODEL" == deepseek-v4-pro ]]; then
+  if tele_agent_is_deepseek_model "$CODEX_MODEL"; then
     DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"
     if [[ -z "$DS_KEY_FILE" || ! -r "$DS_KEY_FILE" ]]; then
       echo "TELEAGENT_DS_KEY_FILE must point to a readable DeepSeek key file for model $CODEX_MODEL" >&2

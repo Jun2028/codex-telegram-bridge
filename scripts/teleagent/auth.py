@@ -396,14 +396,20 @@ def run_codex_reset_helper(
     return process.returncode, stdout, stderr
 
 
+def codex_account_home() -> Path:
+    """Use this bot's configured account instead of the listener's shell default."""
+    return Path(
+        os.environ.get("TELEAGENT_CODEX_HOME")
+        or os.environ.get("CODEX_HOME")
+        or str(Path.home() / ".codex")
+    ).expanduser()
+
+
 def inspect_codex_live_usage(repo_root: Path) -> dict[str, Any]:
     """Fetch a new account/rateLimits/read response; never use TUI or rollout snapshots."""
-    codex_home = Path(
-        os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))
-    ).expanduser()
     return codex_rate_limits.read_rate_limits(
         _processes.codex_executable(),
-        codex_home=codex_home,
+        codex_home=codex_account_home(),
         workdir=repo_root,
     )
 
@@ -473,33 +479,51 @@ def reconcile_codex_usage_state_from_live_query(
     return state
 
 
-def list_codex_usage_resets(repo_root: Path) -> tuple[int, list[str]]:
-    returncode, stdout, stderr = run_codex_reset_helper(
-        repo_root, "--list", timeout=120
-    )
-    if returncode != 0:
-        detail = " ".join((stderr or stdout or "reset listing failed").split())[:500]
-        raise RuntimeError(detail)
-    available: int | None = None
+def list_codex_usage_resets(
+    repo_root: Path, *, live: dict[str, Any] | None = None
+) -> tuple[int, list[str]]:
+    snapshot = live if live is not None else inspect_codex_live_usage(repo_root)
+    credits = snapshot.get("result", {}).get("rateLimitResetCredits")
+    if not isinstance(credits, dict):
+        raise RuntimeError("Codex did not report banked resets for this account")
+    available = credits.get("availableCount")
+    if type(available) is not int or available < 0:
+        raise RuntimeError("Codex returned an invalid banked reset count")
     entries: list[str] = []
-    for raw_line in stdout.splitlines():
-        line = raw_line.strip()
-        if line.startswith("AVAILABLE="):
+    for credit in credits.get("credits") or []:
+        if not isinstance(credit, dict) or credit.get("status") != "available":
+            continue
+        title = " ".join(str(credit.get("title") or "Rate-limit reset").split())
+        expiry = credit.get("expiresAt")
+        expiry_text = "No expiry reported"
+        if isinstance(expiry, (int, float)) and not isinstance(expiry, bool):
             try:
-                available = int(line.split("=", 1)[1])
-            except ValueError:
-                raise RuntimeError("reset listing returned an invalid count") from None
-        elif line.startswith("RESET="):
-            entry = " ".join(line.split("=", 1)[1].split())
-            if entry:
-                entries.append(entry)
-    if available is None or available < 0:
-        raise RuntimeError("reset listing did not return an available count")
-    if available != len(entries) and available != 0:
-        raise RuntimeError(
-            f"reset listing was incomplete: reported {available}, parsed {len(entries)} expiry entries"
-        )
+                expiry_text = datetime.fromtimestamp(expiry, _settings.SGT).strftime(
+                    "Expires %d %b %Y, %H:%M SGT"
+                )
+            except (OSError, OverflowError, ValueError):
+                pass
+        entries.append(f"{title} — {expiry_text}")
+    # The service may return only some detail rows; availableCount is authoritative.
     return available, entries
+
+
+class CodexResetUnavailable(RuntimeError):
+    """The service confirmed that no reset was redeemed."""
+
+
+def redeem_codex_usage_reset(repo_root: Path, *, idempotency_key: str) -> str:
+    outcome = codex_rate_limits.consume_reset_credit(
+        _processes.codex_executable(),
+        codex_home=codex_account_home(),
+        workdir=repo_root,
+        idempotency_key=idempotency_key,
+    )
+    if outcome == "noCredit":
+        raise CodexResetUnavailable("No banked Codex resets are available. No reset was redeemed.")
+    if outcome == "nothingToReset":
+        raise CodexResetUnavailable("There is no eligible usage-limit window to reset. No reset was redeemed.")
+    return outcome
 
 
 def reset_confirmation_state(
@@ -531,11 +555,13 @@ def format_codex_reset_confirmation(
 ) -> str:
     lines = [f"Banked Codex resets remaining: {available}"]
     lines.extend(f"{index}. {entry}" for index, entry in enumerate(entries, start=1))
+    if len(entries) < available:
+        lines.append(f"Expiry details were not returned for {available - len(entries)} reset(s).")
     expires_text = datetime.fromtimestamp(expires_ts, _settings.SGT).strftime(
         "%H:%M:%S SGT"
     )
     lines.append(
-        f"Send /Confirm before {expires_text} to spend one Full reset. Any other text does not confirm."
+        f"Send /Confirm before {expires_text} to spend one reset. Any other text does not confirm."
     )
     return "\n".join(lines)
 

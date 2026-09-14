@@ -8,6 +8,24 @@ source "$SCRIPT_DIR/relay_paths.sh"
 DS_UTILS_ROOT="${DS_UTILS_ROOT:-$TELEAGENT_REPO/config/deepseek}"
 DS_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
 DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"
+REQUESTED_MODEL="$TELEAGENT_DEEPSEEK_FLASH_MODEL"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --model)
+      REQUESTED_MODEL="${2:-}"
+      shift 2
+      ;;
+    -h|--help)
+      echo "usage: prepare_telegram_ds_codex_home.sh [--model MODEL]" >&2
+      exit 0
+      ;;
+    *)
+      echo "usage: prepare_telegram_ds_codex_home.sh [--model MODEL]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 [ -n "$DS_KEY_FILE" ] || {
   echo "TELEAGENT_DS_KEY_FILE is required for DeepSeek mode" >&2
@@ -16,10 +34,6 @@ DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"
 
 [ -f "$DS_UTILS_ROOT/models.json" ] || {
   echo "DeepSeek model catalog is missing: $DS_UTILS_ROOT/models.json" >&2
-  exit 1
-}
-[ -f "$DS_UTILS_ROOT/deepseek-v4-flash.json" ] || {
-  echo "DeepSeek flash model specification is missing" >&2
   exit 1
 }
 [ -r "$DS_KEY_FILE" ] || {
@@ -31,12 +45,40 @@ DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"
   exit 1
 }
 
+tele_agent_is_deepseek_model "$REQUESTED_MODEL" || {
+  echo "unsupported DeepSeek model: $REQUESTED_MODEL" >&2
+  exit 1
+}
+
+MODEL_SPEC="$DS_UTILS_ROOT/$REQUESTED_MODEL.json"
+[ -f "$MODEL_SPEC" ] || {
+  echo "DeepSeek model specification is missing: $MODEL_SPEC" >&2
+  exit 1
+}
+
 mkdir -p "$DS_CODEX_HOME"
 chmod 700 "$DS_CODEX_HOME"
 tele_agent_claim_codex_home "$DS_CODEX_HOME"
 install -m 600 "$DS_UTILS_ROOT/models.json" "$DS_CODEX_HOME/models.json"
-install -m 600 "$DS_UTILS_ROOT/deepseek-v4-flash.json" \
-  "$DS_CODEX_HOME/agent-model.json"
+install -m 600 "$MODEL_SPEC" "$DS_CODEX_HOME/agent-model.json"
+
+python3 - "$DS_CODEX_HOME/models.json" "$REQUESTED_MODEL" <<'PY' || {
+import json
+import sys
+
+catalog, model = sys.argv[1], sys.argv[2]
+with open(catalog, encoding="utf-8") as handle:
+    slugs = {
+        entry.get("slug")
+        for entry in json.load(handle).get("models", [])
+        if isinstance(entry, dict)
+    }
+if model not in slugs:
+    raise SystemExit(f"DeepSeek model catalog does not list {model}")
+PY
+  echo "DeepSeek model catalog does not list $REQUESTED_MODEL" >&2
+  exit 1
+}
 
 if [[ "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
   tele_agent_prepare_chat_only_workspace "$TELEAGENT_CHAT_ONLY_WORKDIR"
@@ -58,7 +100,7 @@ if [[ "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
     --model-spec "$DS_CODEX_HOME/agent-model.json"
 else
   cat > "$DS_CODEX_HOME/config.toml" <<TOML
-model = "deepseek-v4-flash"
+model = "$REQUESTED_MODEL"
 model_provider = "deepseek"
 model_reasoning_effort = "max"
 model_catalog_json = "$DS_CODEX_HOME/models.json"
@@ -88,6 +130,8 @@ ignore_default_excludes = false
 
 [shell_environment_policy.set]
 AGENT_MODEL_SPEC_PATH = "$DS_CODEX_HOME/agent-model.json"
+TELEAGENT_MACHINE_CONTEXT = "$TELEAGENT_MACHINE_CONTEXT"
+TELEAGENT_INSTANCE_CONTEXT = "$TELEAGENT_INSTANCE_CONTEXT"
 
 [projects."$TELEAGENT_REPO"]
 trust_level = "trusted"
@@ -95,4 +139,4 @@ TOML
 fi
 chmod 600 "$DS_CODEX_HOME/config.toml"
 
-echo "prepared $TELEAGENT_CODEX_ACCESS_MODE DeepSeek tele-agent Codex home: $DS_CODEX_HOME"
+echo "prepared $TELEAGENT_CODEX_ACCESS_MODE DeepSeek tele-agent Codex home: $DS_CODEX_HOME model=$REQUESTED_MODEL"

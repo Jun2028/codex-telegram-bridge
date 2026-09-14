@@ -387,8 +387,12 @@ class FailureReportingTests(unittest.TestCase):
         )
         with (
             mock.patch.object(
-                auth, "run_codex_reset_helper", return_value=(0, "RESET_SUCCESS\n", "")
+                auth, "redeem_codex_usage_reset", return_value="reset"
             ) as redeem,
+            mock.patch.object(
+                auth, "inspect_codex_live_usage",
+                return_value={"status_lines": ["Weekly limit: 100% left"]},
+            ),
             mock.patch.object(
                 lifecycle,
                 "start_codex_agent",

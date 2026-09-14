@@ -54,6 +54,7 @@ see [delivery guarantees](architecture.md).
 `/models` lists aliases. Use `/model NAME [LEVEL]` or `/reasoning LEVEL`.
 `latest` and `astra` select GPT-6 Astra; other aliases are `sol`, `luna`, `spark`,
 `ds-flash` and `ds-pro`. Supported reasoning values depend on the model.
+`ds-flash` launches the GA `deepseek-flash` slug.
 The last actual `turn_context` is the authority for the model shown in status.
 Before the first turn, status may fall back to the configured/live selector.
 
@@ -144,7 +145,12 @@ use an OS/container boundary when the runtime itself must lack host-file access.
 
 `/reauth` runs the fixed device-code sign-in flow in private. `/codex_usage`
 queries the account. `/codex_reset` followed by `/Confirm` explicitly redeems a
-banked reset when supported. Authentication recovery respects an intentionally
+banked reset when supported. Usage and reset queries use the bot's configured
+Codex account home. Resets use the Codex account API and do not require a local
+reset watchdog. Listing resets never spends one; each confirmed redemption has
+a saved idempotency key, and usage is queried again after redemption. A response
+of `noCredit` or `nothingToReset` is reported without restarting the agent.
+Authentication recovery respects an intentionally
 stopped agent.
 
 The Codex supervisor restarts unexpected exits with bounded backoff; the

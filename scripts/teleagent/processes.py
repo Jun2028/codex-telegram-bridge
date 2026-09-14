@@ -233,7 +233,7 @@ def codex_home_for_model(model: str) -> Path:
             str(Path.home() / ".local" / "share" / "tele-agent"),
         )
     )
-    if model in {"deepseek-v4-flash", "deepseek-v4-pro"}:
+    if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
         return (
             Path(
                 os.environ.get(
