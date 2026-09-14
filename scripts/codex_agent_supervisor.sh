@@ -84,11 +84,11 @@ while [[ "$stop_requested" -eq 0 ]]; do
     "$restart_count" >> "$LOG_PATH"
 
   use_ds=0
-  case "$MODEL" in
-    deepseek-v4-flash|deepseek-v4-pro) use_ds=1 ;;
-  esac
+  if tele_agent_is_deepseek_model "$MODEL"; then
+    use_ds=1
+  fi
   if [[ "$use_ds" -eq 1 ]]; then
-    "$SCRIPT_DIR/prepare_telegram_ds_codex_home.sh" >/dev/null
+    "$SCRIPT_DIR/prepare_telegram_ds_codex_home.sh" --model "$MODEL" >/dev/null
     export CODEX_HOME="$DS_CODEX_HOME"
     set -a
     # shellcheck disable=SC1090

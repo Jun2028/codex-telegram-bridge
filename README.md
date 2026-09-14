@@ -103,7 +103,8 @@ OpenAI-authenticated Codex installation, follow the [operator setup](docs/telegr
 
 The listener controls Codex; Codex connects to the model provider. Available
 models depend on that installation and account. The included aliases are Astra,
-Sol, Luna, Spark, DeepSeek Flash and DeepSeek Pro.
+Sol, Luna, Spark, DeepSeek Flash and DeepSeek Pro. `ds-flash` launches the GA
+`deepseek-flash` slug.
 
 ## Private host configuration
 

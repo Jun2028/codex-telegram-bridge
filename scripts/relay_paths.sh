@@ -18,7 +18,8 @@ export TELEAGENT_INSTANCE="${TELEAGENT_INSTANCE:-main}"
 # For non-main instances, derive the source home from the main configuration,
 # never from a private home inherited during a supervisor re-exec.
 if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
-  unset TELEAGENT_CODEX_HOME TELEAGENT_CODEX_SOURCE_HOME
+  unset TELEAGENT_CODEX_HOME TELEAGENT_CODEX_SOURCE_HOME \
+    TELEAGENT_DS_KEY_FILE
 fi
 if [[ -f "$TELEAGENT_REPO/config/relay.env" ]]; then
   # shellcheck disable=SC1091
@@ -26,6 +27,7 @@ if [[ -f "$TELEAGENT_REPO/config/relay.env" ]]; then
 fi
 
 tele_agent_main_codex_home="${TELEAGENT_CODEX_HOME:-$HOME/.codex}"
+tele_agent_main_ds_key_file="${TELEAGENT_DS_KEY_FILE:-}"
 if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
   # Never leak another instance's ambient agent/session/config vars into this
   # instance. The instance's own relay-<instance>.env is the override point.
@@ -43,7 +45,8 @@ if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
     TELEAGENT_CHAT_ONLY_WORKDIR \
     TELEAGENT_CODEX_REASONING_EFFORT TELEAGENT_CODEX_WINDOW \
     TELEAGENT_DS_CODEX_HOME TELEAGENT_DS_KEY_FILE TELEAGENT_INBOX_TARGET \
-    TELEAGENT_LOG_DIR TELEAGENT_SCRATCH TELEAGENT_SECRET_ENV \
+    TELEAGENT_INSTANCE_CONTEXT TELEAGENT_LOG_DIR TELEAGENT_MACHINE_CONTEXT \
+    TELEAGENT_SCRATCH TELEAGENT_SECRET_ENV \
     TELEAGENT_PERSONALITY_FILE TELEAGENT_TMUX_SESSION
 fi
 unset TELEAGENT_PRESERVE_AGENT_BINDING
@@ -51,6 +54,14 @@ if [[ "$TELEAGENT_INSTANCE" != "main" && -f "$TELEAGENT_REPO/config/relay-${TELE
   # shellcheck disable=SC1091
   source "$TELEAGENT_REPO/config/relay-${TELEAGENT_INSTANCE}.env"
 fi
+
+# DeepSeek credentials may be shared between isolated instances. Derive the
+# default from the main configuration, while still allowing an instance-local
+# override and rejecting an unrelated ambient value.
+if [[ "$TELEAGENT_INSTANCE" != "main" && -z "${TELEAGENT_DS_KEY_FILE:-}" ]]; then
+  export TELEAGENT_DS_KEY_FILE="$tele_agent_main_ds_key_file"
+fi
+unset tele_agent_main_ds_key_file
 
 export TELEAGENT_CODEX_ACCESS_MODE="${TELEAGENT_CODEX_ACCESS_MODE:-full-access}"
 case "$TELEAGENT_CODEX_ACCESS_MODE" in
@@ -80,6 +91,12 @@ fi
 
 export TELEAGENT_CHAT_ONLY_CODEX_HOME="${TELEAGENT_CHAT_ONLY_CODEX_HOME:-$TELEAGENT_SCRATCH/chat-only-codex-home}"
 export TELEAGENT_CHAT_ONLY_WORKDIR="${TELEAGENT_CHAT_ONLY_WORKDIR:-$TELEAGENT_SCRATCH/chat-only-workspace}"
+
+# Machine context: one shared file for facts about the whole box, plus this
+# instance's own file, which wins on conflict. Both are operator-owned and
+# live outside the repository.
+export TELEAGENT_MACHINE_CONTEXT="${TELEAGENT_MACHINE_CONTEXT:-$HOME/.config/tele-agent/machine.md}"
+export TELEAGENT_INSTANCE_CONTEXT="${TELEAGENT_INSTANCE_CONTEXT:-$TELEAGENT_SCRATCH/machine-context.md}"
 
 # Full-access non-main instances need private state. Chat-only instances use a
 # separate, minimal home so switching modes never exposes a copied capability
@@ -122,6 +139,22 @@ tele_agent_log() {
   local message="$*"
   mkdir -p "$TELEAGENT_LOG_DIR"
   printf '[%s] %s\n' "$(date -Iseconds)" "$message" | tee -a "$TELEAGENT_LOG_DIR/control.log"
+}
+
+# DeepSeek model wiring.  The flash slug is the provider's GA name
+# (`deepseek-flash`, listed in GET /models).  Keep in sync with
+# scripts/teleagent/settings.py.
+export TELEAGENT_DEEPSEEK_FLASH_MODEL="deepseek-flash"
+export TELEAGENT_DEEPSEEK_PRO_MODEL="deepseek-v4-pro"
+
+tele_agent_is_deepseek_model() {
+  case "${1:-}" in
+    "$TELEAGENT_DEEPSEEK_FLASH_MODEL"|\
+    "$TELEAGENT_DEEPSEEK_PRO_MODEL")
+      return 0
+      ;;
+  esac
+  return 1
 }
 
 # A tmux server keeps the environment of the process that created it.  If a

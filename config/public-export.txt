@@ -5,7 +5,7 @@ LICENSE
 README.md
 config/chat-only-agent-instructions.md
 config/codex-chat-only.toml.template
-config/deepseek/deepseek-v4-flash.json
+config/deepseek/deepseek-flash.json
 config/deepseek/deepseek-v4-pro.json
 config/deepseek/models.json
 config/notify.env.template
@@ -74,7 +74,9 @@ scripts/telegram_inbox_supervisor.sh
 scripts/tmux_isolated_test.sh
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
+tests/test_codex_reset_api.py
 tests/test_goal_status_and_model_guard.py
+tests/test_deepseek_flash_wiring.py
 tests/test_deepseek_provider.py
 tests/test_failure_reporting.py
 tests/test_listener_deployment.py

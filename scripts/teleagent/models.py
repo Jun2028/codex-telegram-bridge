@@ -44,13 +44,15 @@ def normalize_codex_agent_model(value: str, *, live: bool = False) -> str:
                 "unknown model; use latest/astra (gpt-6-astra), "
                 "sol (gpt-5.6-sol), luna (gpt-5.6-luna), "
                 "spark (gpt-5.3-codex-spark), or "
-                "ds-flash (deepseek-v4-flash) / ds-pro (deepseek-v4-pro)"
+                "ds-flash (deepseek-flash) / "
+                "ds-pro (deepseek-v4-pro)"
             )
         raise ValueError(
             "unknown model; use latest/astra (gpt-6-astra), "
             "sol (gpt-5.6-sol), luna (gpt-5.6-luna), "
             "spark (gpt-5.3-codex-spark), or "
-            "ds-flash (deepseek-v4-flash) / ds-pro (deepseek-v4-pro)"
+            "ds-flash (deepseek-flash) / "
+            "ds-pro (deepseek-v4-pro)"
         )
     return model
 
@@ -71,11 +73,7 @@ def validate_model_reasoning_effort(model: str, effort: str) -> None:
     }:
         raise ValueError("Spark reasoning must be low, medium, high, or xhigh")
     if (
-        model
-        in {
-            _settings.DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
-            _settings.DEEPSEEK_PRO_CODEX_AGENT_MODEL,
-        }
+        model in _settings.DEEPSEEK_CODEX_AGENT_MODELS
         and effort != "max"
     ):
         raise ValueError("DeepSeek reasoning must be max")
@@ -96,11 +94,7 @@ def parse_live_model_payload(payload: str) -> tuple[str, str | None]:
         parse_live_reasoning_effort(tokens[1]) if len(tokens) == 2 else None
     )
     if (
-        model
-        in {
-            _settings.DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
-            _settings.DEEPSEEK_PRO_CODEX_AGENT_MODEL,
-        }
+        model in _settings.DEEPSEEK_CODEX_AGENT_MODELS
         and reasoning_effort is None
     ):
         reasoning_effort = "max"
@@ -115,7 +109,7 @@ def current_codex_model_and_reasoning_effort(
 ) -> tuple[str, str] | None:
     pane_text = _processes.tmux_tail(target_pane, lines=30)
     matches = re.findall(
-        r"\b(gpt-[\w.-]+|deepseek-v4-(?:flash|pro))\s+"
+        r"\b(gpt-[\w.-]+|deepseek-[\w.-]+)\s+"
         r"(low|medium|high|xhigh|max|ultra)(?:\s+[·/]|\s*$)",
         pane_text,
         flags=re.MULTILINE,
@@ -212,11 +206,7 @@ def set_codex_model(
     selected_model = normalize_codex_agent_model(model, live=True)
     default_effort = (
         "max"
-        if selected_model
-        in {
-            _settings.DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
-            _settings.DEEPSEEK_PRO_CODEX_AGENT_MODEL,
-        }
+        if selected_model in _settings.DEEPSEEK_CODEX_AGENT_MODELS
         else "high"
     )
     selected_effort = parse_live_reasoning_effort(reasoning_effort or default_effort)
@@ -240,10 +230,7 @@ def set_codex_model(
             flags=re.MULTILINE,
         )
         if not match:
-            if selected_model in {
-                _settings.DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
-                _settings.DEEPSEEK_PRO_CODEX_AGENT_MODEL,
-            }:
+            if selected_model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
                 raise RuntimeError(
                     "the running pane is not DeepSeek-backed; "
                     "use /restart_agent ds-flash or ds-pro to relaunch it as DeepSeek"

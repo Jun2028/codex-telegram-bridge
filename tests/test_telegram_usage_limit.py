@@ -349,8 +349,14 @@ class TelegramUsageLimitTests(unittest.TestCase):
     def test_parse_live_model_payload_accepts_ds_flash(self) -> None:
         model, reasoning = telegram_inbox.parse_live_model_payload("ds-flash")
 
-        self.assertEqual(model, "deepseek-v4-flash")
+        self.assertEqual(model, "deepseek-flash")
         self.assertEqual(reasoning, "max")
+
+    def test_deepseek_flash_defaults_to_the_ga_slug(self) -> None:
+        self.assertEqual(
+            telegram_inbox.DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
+            "deepseek-flash",
+        )
 
     def test_parse_live_model_payload_accepts_astra_alias(self) -> None:
         model, reasoning = telegram_inbox.parse_live_model_payload("astra")
@@ -388,10 +394,10 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
     def test_parse_live_model_payload_accepts_full_deepseek_flash(self) -> None:
         model, reasoning = telegram_inbox.parse_live_model_payload(
-            "deepseek-v4-flash max"
+            "deepseek-flash max"
         )
 
-        self.assertEqual(model, "deepseek-v4-flash")
+        self.assertEqual(model, "deepseek-flash")
         self.assertEqual(reasoning, "max")
 
     def test_parse_live_model_payload_rejects_non_max_ds_flash(self) -> None:
@@ -413,7 +419,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             "ds-flash"
         )
 
-        self.assertEqual(model, "deepseek-v4-flash")
+        self.assertEqual(model, "deepseek-flash")
         self.assertEqual(reasoning, "max")
         self.assertTrue(explicit)
 
@@ -434,6 +440,22 @@ class TelegramUsageLimitTests(unittest.TestCase):
             )
 
         self.assertEqual(current, ("deepseek-v4-flash", "max"))
+
+    def test_current_codex_model_detects_deepseek_v41_preview(self) -> None:
+        with mock.patch.object(
+            _relay_processes,
+            "tmux_tail",
+            return_value=(
+                "Current: deepseek-v4.1-flash-expires-on-0910 max\n"
+            ),
+        ):
+            current = telegram_inbox.current_codex_model_and_reasoning_effort(
+                "ds-goal:0.0"
+            )
+
+        self.assertEqual(
+            current, ("deepseek-v4.1-flash-expires-on-0910", "max")
+        )
 
     def test_current_codex_model_falls_back_to_session_turn_context(self) -> None:
         self._write_records(
@@ -883,7 +905,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             )
 
         call = start_agent.call_args.kwargs
-        self.assertEqual(call["model"], "deepseek-v4-flash")
+        self.assertEqual(call["model"], "deepseek-flash")
         self.assertEqual(call["reasoning_effort"], "max")
         self.assertTrue(call["restart"])
 
@@ -1163,7 +1185,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 return (
                     "  1. gpt-5.6-sol (current)\n"
                     "  2. deepseek-v4-pro\n"
-                    "› 3. deepseek-v4-flash\n"
+                    "› 3. deepseek-flash\n"
                 )
             return expected
 
@@ -1181,7 +1203,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             mock.patch.object(
                 _relay_models,
                 "current_codex_model_and_reasoning_effort",
-                return_value=("deepseek-v4-flash", "max"),
+                return_value=("deepseek-flash", "max"),
             ),
         ):
             selected = telegram_inbox.set_codex_model(
@@ -1189,7 +1211,9 @@ class TelegramUsageLimitTests(unittest.TestCase):
                 "ds-flash",
             )
 
-        self.assertEqual(selected, ("deepseek-v4-flash", "max"))
+        self.assertEqual(
+            selected, ("deepseek-flash", "max")
+        )
         self.assertEqual(
             send_keys.call_args_list.count(
                 mock.call("tele-agent:codex.0", "Down")
@@ -2254,8 +2278,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
         with (
             mock.patch.object(
                 _relay_auth,
-                "run_codex_reset_helper",
-                return_value=(0, "RESET_SUCCESS\n", ""),
+                "redeem_codex_usage_reset",
+                return_value="reset",
+            ),
+            mock.patch.object(
+                _relay_auth, "inspect_codex_live_usage",
+                return_value={"status_lines": ["Weekly limit: 100% left"]},
             ),
             mock.patch.object(
                 _relay_lifecycle,
@@ -2319,8 +2347,12 @@ class TelegramUsageLimitTests(unittest.TestCase):
         with (
             mock.patch.object(
                 _relay_auth,
-                "run_codex_reset_helper",
-                return_value=(0, "RESET_SUCCESS\n", ""),
+                "redeem_codex_usage_reset",
+                return_value="reset",
+            ),
+            mock.patch.object(
+                _relay_auth, "inspect_codex_live_usage",
+                return_value={"status_lines": ["Weekly limit: 100% left"]},
             ),
             mock.patch.object(_relay_lifecycle, "start_codex_agent") as start_agent,
             mock.patch.object(_relay_transport, "send_reply") as send_reply,
@@ -2353,15 +2385,17 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(telegram_inbox.read_json_object(reset_state)["phase"], "expired")
 
     def test_reset_listing_parser_preserves_every_expiry(self) -> None:
-        output = (
-            "AVAILABLE=2\n"
-            "RESET=Full reset  Expires 05:09 on 12 Aug 2026.\n"
-            "RESET=Full reset  Expires 02:13 on 13 Aug 2026.\n"
-        )
+        snapshot = {"result": {"rateLimitResetCredits": {
+            "availableCount": 2,
+            "credits": [
+                {"status": "available", "expiresAt": 1786482540},
+                {"status": "available", "expiresAt": 1786558380},
+            ],
+        }}}
         with mock.patch.object(
             _relay_auth,
-            "run_codex_reset_helper",
-            return_value=(0, output, ""),
+            "inspect_codex_live_usage",
+            return_value=snapshot,
         ):
             available, entries = telegram_inbox.list_codex_usage_resets(self.repo)
         self.assertEqual(available, 2)

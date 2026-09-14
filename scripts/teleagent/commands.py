@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import socket
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -262,14 +263,12 @@ def handle_update(
             live_error = _transport.short_error(exc, env)
             record["codex_live_usage_error"] = live_error
         try:
-            available, entries = _auth.list_codex_usage_resets(args.repo_root)
-            if live_usage is not None:
-                live_status_text = _auth.format_live_codex_limits(live_usage)
-            else:
-                live_status_text = (
-                    "Fresh Codex account/rateLimits/read failed; no cached usage percentage "
-                    f"was substituted. Detail: {live_error or 'unknown error'}"
-                )
+            if live_usage is None:
+                raise RuntimeError(live_error or "Codex account query failed")
+            available, entries = _auth.list_codex_usage_resets(
+                args.repo_root, live=live_usage
+            )
+            live_status_text = _auth.format_live_codex_limits(live_usage)
             if available == 0:
                 reply = (
                     live_status_text
@@ -298,6 +297,8 @@ def handle_update(
                         "sender_id": sender_id,
                         "available": available,
                         "entries": entries,
+                        "account_home": str(_auth.codex_account_home()),
+                        "idempotency_key": str(uuid.uuid4()),
                     },
                 )
                 reply = (
@@ -314,20 +315,27 @@ def handle_update(
             if live_usage is not None:
                 live_prefix = _auth.format_live_codex_limits(live_usage) + "\n\n"
             else:
-                live_prefix = (
-                    "Fresh Codex account/rateLimits/read failed; no cached usage percentage "
-                    f"was substituted. Detail: {live_error or 'unknown error'}\n\n"
-                )
+                live_prefix = ""
             reply = (
                 live_prefix
-                + "Could not inspect banked Codex resets: "
+                + "Could not check banked Codex resets. No reset was redeemed. "
                 + _transport.short_error(exc, env)
+            )
+            _state.write_json_object(
+                reset_state_path,
+                {
+                    "phase": "check_failed",
+                    "checked_ts": int(time.time()),
+                    "chat_id": chat_id,
+                    "sender_id": sender_id,
+                },
             )
             record["action"] = "codex_reset_list_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
     elif command == "/confirm":
         raw_reset_state = _state.read_json_object(reset_state_path)
         if pending_reset:
+            pending_reset.setdefault("idempotency_key", str(uuid.uuid4()))
             pending_reset.update(
                 {"phase": "executing", "confirmed_ts": int(time.time())}
             )
@@ -336,29 +344,32 @@ def handle_update(
                 args,
                 token,
                 source_chat_id,
-                "Confirmed. Mechanically redeeming one Full reset; the automatic reset watchdog will be restored afterward.",
+                "Confirmed. Redeeming one banked Codex reset.",
             )
             record["action"] = "codex_reset_confirmed"
             redeemed = False
             reset_stage = "redeem the reset"
             try:
-                returncode, stdout, stderr = _auth.run_codex_reset_helper(
-                    args.repo_root, "--redeem", timeout=180
+                account_home = pending_reset.get("account_home")
+                if account_home and account_home != str(_auth.codex_account_home()):
+                    raise _auth.CodexResetUnavailable(
+                        "The bot's Codex account configuration changed. Run /codex_reset again. No reset was redeemed."
+                    )
+                outcome = _auth.redeem_codex_usage_reset(
+                    args.repo_root, idempotency_key=pending_reset["idempotency_key"]
                 )
-                redeemed = "RESET_SUCCESS" in stdout.splitlines()
+                redeemed = outcome in {"reset", "alreadyRedeemed"}
                 if redeemed:
                     pending_reset.update(
                         phase="redeemed", redeemed=True, redeemed_ts=int(time.time())
                     )
                     _state.write_json_object(reset_state_path, pending_reset)
-                if returncode != 0 or not redeemed:
-                    detail = " ".join(
-                        (stderr or stdout or "redemption failed").split()
-                    )[:500]
-                    raise RuntimeError(detail)
+                if not redeemed:
+                    raise RuntimeError("Codex did not confirm reset redemption")
                 reset_stage = "refresh usage state"
-                _usage.clear_codex_usage_depletion(
-                    usage_state_path, "manual_usage_reset_redeemed"
+                live_usage = _auth.inspect_codex_live_usage(args.repo_root)
+                _auth.reconcile_codex_usage_state_from_live_query(
+                    usage_state_path, live_usage
                 )
                 restart_agent = (
                     _lifecycle.agent_desired_state(args)
@@ -386,17 +397,29 @@ def handle_update(
                 }
                 _state.write_json_object(reset_state_path, completed_state)
                 reply = (
-                    "One Full reset was redeemed successfully. The Telegram Codex agent "
+                    "One reset was redeemed successfully. The Telegram Codex agent "
                     "was restarted; resend your task now."
                     if restart_agent
                     else (
-                        "One Full reset was redeemed successfully. The Telegram Codex "
+                        "One reset was redeemed successfully. The Telegram Codex "
                         "agent remains stopped; use /start_agent when wanted."
                     )
                 )
                 record["relay_result"] = start_result
                 record["target_pane"] = target_pane
                 record["agent_id"] = meta.get("agent_id") if meta else None
+            except _auth.CodexResetUnavailable as exc:
+                _state.write_json_object(
+                    reset_state_path,
+                    {
+                        **pending_reset,
+                        "phase": "unavailable",
+                        "redeemed": False,
+                        "completed_ts": int(time.time()),
+                    },
+                )
+                reply = str(exc)
+                record["action"] = "codex_reset_unavailable"
             except Exception as exc:
                 failed_state = {
                     **pending_reset,

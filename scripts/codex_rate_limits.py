@@ -17,14 +17,16 @@ class RateLimitError(RuntimeError):
     """A fresh Codex account rate-limit response could not be obtained."""
 
 
-def read_rate_limits(
+def _account_request(
     codex_bin: str,
     *,
     codex_home: Path,
     workdir: Path,
+    method: str,
+    params: Mapping[str, Any] | None = None,
     timeout: float = 30,
 ) -> dict[str, Any]:
-    """Fetch current ChatGPT rate limits through Codex app-server JSON-RPC."""
+    """Make one account request without starting a model turn."""
     try:
         process = subprocess.Popen(
             [codex_bin, "app-server"],
@@ -63,11 +65,11 @@ def read_rate_limits(
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RateLimitError("Codex rate-limit request timed out")
+                raise RateLimitError(f"Codex {method} request timed out")
             try:
                 raw_line = lines.get(timeout=remaining)
             except queue.Empty as exc:
-                raise RateLimitError("Codex rate-limit request timed out") from exc
+                raise RateLimitError(f"Codex {method} request timed out") from exc
             if raw_line is None:
                 raise RateLimitError(
                     f"Codex app-server exited before response id {request_id}"
@@ -97,7 +99,10 @@ def read_rate_limits(
         if initialized.get("error"):
             raise RateLimitError("Codex app-server initialization failed")
         send({"method": "initialized", "params": {}})
-        send({"method": "account/rateLimits/read", "id": 2})
+        request: dict[str, Any] = {"method": method, "id": 2}
+        if params is not None:
+            request["params"] = params
+        send(request)
         response = wait_for_response(2)
     finally:
         try:
@@ -117,10 +122,28 @@ def read_rate_limits(
     if isinstance(response.get("error"), dict):
         error = response["error"]
         message = str(error.get("message") or "unknown JSON-RPC error")
-        raise RateLimitError(f"Codex rate-limit request failed: {message[:500]}")
+        raise RateLimitError(f"Codex {method} request failed: {message[:500]}")
     result = response.get("result")
     if not isinstance(result, dict):
-        raise RateLimitError("Codex rate-limit response did not contain a result object")
+        raise RateLimitError(f"Codex {method} response did not contain a result object")
+    return result
+
+
+def read_rate_limits(
+    codex_bin: str,
+    *,
+    codex_home: Path,
+    workdir: Path,
+    timeout: float = 30,
+) -> dict[str, Any]:
+    """Fetch current ChatGPT rate limits through Codex app-server JSON-RPC."""
+    result = _account_request(
+        codex_bin,
+        codex_home=codex_home,
+        workdir=workdir,
+        method="account/rateLimits/read",
+        timeout=timeout,
+    )
     if not isinstance(result.get("rateLimits"), dict) and not isinstance(
         result.get("rateLimitsByLimitId"), dict
     ):
@@ -133,6 +156,31 @@ def read_rate_limits(
         "fetched_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "result": result,
     }
+
+
+def consume_reset_credit(
+    codex_bin: str,
+    *,
+    codex_home: Path,
+    workdir: Path,
+    idempotency_key: str,
+    timeout: float = 30,
+) -> str:
+    """Redeem an explicitly confirmed reset, reusing its key on any retry."""
+    if not idempotency_key.strip():
+        raise ValueError("a reset idempotency key is required")
+    result = _account_request(
+        codex_bin,
+        codex_home=codex_home,
+        workdir=workdir,
+        method="account/rateLimitResetCredit/consume",
+        params={"idempotencyKey": idempotency_key},
+        timeout=timeout,
+    )
+    outcome = result.get("outcome")
+    if outcome not in ("reset", "alreadyRedeemed", "nothingToReset", "noCredit"):
+        raise RateLimitError("Codex returned an unrecognized reset outcome")
+    return outcome
 
 
 def _buckets(snapshot: Mapping[str, Any]) -> list[tuple[str, Mapping[str, Any]]]:

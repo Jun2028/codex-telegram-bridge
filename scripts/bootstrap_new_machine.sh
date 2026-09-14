@@ -139,7 +139,7 @@ if ! grep -Eq '^(export[[:space:]]+)?TELEAGENT_DS_KEY_FILE=' "$TELEAGENT_REPO/co
   printf 'export TELEAGENT_DS_KEY_FILE="%s"\n' "$key_file" >>"$TELEAGENT_REPO/config/relay.env"
 fi
 if ! grep -Eq '^(export[[:space:]]+)?TELEAGENT_CODEX_MODEL=' "$TELEAGENT_REPO/config/relay.env"; then
-  printf 'export TELEAGENT_CODEX_MODEL="deepseek-v4-flash"\n' >>"$TELEAGENT_REPO/config/relay.env"
+  printf 'export TELEAGENT_CODEX_MODEL="deepseek-flash"\n' >>"$TELEAGENT_REPO/config/relay.env"
 fi
 if ! grep -Eq '^(export[[:space:]]+)?TELEAGENT_CODEX_REASONING_EFFORT=' "$TELEAGENT_REPO/config/relay.env"; then
   printf 'export TELEAGENT_CODEX_REASONING_EFFORT="max"\n' >>"$TELEAGENT_REPO/config/relay.env"

@@ -147,10 +147,20 @@ SPARK_CODEX_AGENT_MODEL = "gpt-5.3-codex-spark"
 LUNA_CODEX_AGENT_MODEL = "gpt-5.6-luna"
 
 
-DEEPSEEK_FLASH_CODEX_AGENT_MODEL = "deepseek-v4-flash"
+# The flash slug is the provider's GA name (`deepseek-flash`, listed in
+# GET /models). Mirror changes in scripts/relay_paths.sh.
+DEEPSEEK_FLASH_CODEX_AGENT_MODEL = "deepseek-flash"
 
 
 DEEPSEEK_PRO_CODEX_AGENT_MODEL = "deepseek-v4-pro"
+
+
+DEEPSEEK_CODEX_AGENT_MODELS = frozenset(
+    {
+        DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
+        DEEPSEEK_PRO_CODEX_AGENT_MODEL,
+    }
+)
 
 
 SUPPORTED_CODEX_AGENT_MODELS = {
@@ -160,8 +170,7 @@ SUPPORTED_CODEX_AGENT_MODELS = {
     DEFAULT_CODEX_AGENT_MODEL,
     SPARK_CODEX_AGENT_MODEL,
     LUNA_CODEX_AGENT_MODEL,
-    DEEPSEEK_FLASH_CODEX_AGENT_MODEL,
-    DEEPSEEK_PRO_CODEX_AGENT_MODEL,
+    *DEEPSEEK_CODEX_AGENT_MODELS,
 }
 
 
