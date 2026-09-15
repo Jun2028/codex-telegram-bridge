@@ -71,6 +71,7 @@ scripts/telegram_agent_reply.sh
 scripts/telegram_format.py
 scripts/telegram_inbox.py
 scripts/telegram_inbox_supervisor.sh
+scripts/telegram_inbox_watchdog.sh
 scripts/tmux_isolated_test.sh
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
@@ -80,6 +81,7 @@ tests/test_deepseek_flash_wiring.py
 tests/test_deepseek_provider.py
 tests/test_failure_reporting.py
 tests/test_listener_deployment.py
+tests/test_listener_recovery.py
 tests/test_manual_codex_usage_reset.py
 tests/test_public_export.py
 tests/test_teleagent_service.py

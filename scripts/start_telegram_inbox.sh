@@ -117,6 +117,10 @@ if [[ "${TELEAGENT_INSTANCE:-main}" != "main" ]]; then
   READABLE_DIR="$TELEAGENT_REPO/logs/readable-${TELEAGENT_INSTANCE}"
 fi
 mkdir -p "$TELEAGENT_LOG_DIR" "$READABLE_DIR"
+# Serialize recovery and deployment so two launchers cannot create duplicate
+# inbox windows while both observe that the previous window is absent.
+exec {inbox_start_lock}> "$TELEAGENT_LOG_DIR/telegram_inbox.start.lock"
+flock -x "$inbox_start_lock"
 
 link_readable_path() {
   local name="$1"
