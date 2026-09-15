@@ -8,6 +8,9 @@ shift
 mkdir -p "$TELEAGENT_LOG_DIR"
 log="$TELEAGENT_LOG_DIR/telegram_inbox.supervisor.log"
 pid_file="$TELEAGENT_LOG_DIR/telegram_inbox.pid"
+# Keep the log open across restarts. Reopening it after ENFILE can terminate
+# the supervisor precisely when the listener needs to be restarted.
+exec >> "$log" 2>&1
 child=""
 stopping=0
 stop_listener() {
@@ -15,15 +18,18 @@ stop_listener() {
   [[ -z "$child" ]] || kill -TERM "$child" 2>/dev/null || true
 }
 trap stop_listener HUP INT TERM
-trap 'rm -f "$pid_file"' EXIT
+trap 'rm -f "$pid_file" "$pid_file.tmp" || true' EXIT
 failures=0
 while [[ "$stopping" == 0 ]]; do
   started=$SECONDS
-  printf '[%s] starting telegram inbox\n' "$(date -Iseconds)" >> "$log"
-  "$@" >> "$log" 2>&1 &
+  printf '[%(%Y-%m-%dT%H:%M:%S%z)T] starting telegram inbox\n' -1 || true
+  "$@" &
   child=$!
-  printf '%s\n' "$child" > "$pid_file.tmp"
-  mv -f "$pid_file.tmp" "$pid_file"
+  if ! { printf '%s\n' "$child" > "$pid_file.tmp" &&
+         mv -f "$pid_file.tmp" "$pid_file"; }; then
+    printf 'Unable to publish listener PID; continuing to supervise pid=%s\n' "$child" || true
+    rm -f "$pid_file.tmp" || true
+  fi
   result=0
   wait "$child" || result=$?
   if [[ "$stopping" == 1 ]]; then
@@ -31,14 +37,14 @@ while [[ "$stopping" == 0 ]]; do
     break
   fi
   child=""
-  rm -f "$pid_file"
+  rm -f "$pid_file" || true
   (( SECONDS - started < 300 )) || failures=0
   failures=$((failures + 1))
   exponent=$((failures - 1))
   (( exponent < 4 )) || exponent=4
   delay=$((5 * (1 << exponent)))
   (( delay < 60 )) || delay=60
-  printf '[%s] listener exited rc=%s; restarting in %ss\n' "$(date -Iseconds)" "$result" "$delay" >> "$log"
+  printf '[%(%Y-%m-%dT%H:%M:%S%z)T] listener exited rc=%s; restarting in %ss\n' -1 "$result" "$delay" || true
   sleep "$delay" &
   child=$!
   wait "$child" || true

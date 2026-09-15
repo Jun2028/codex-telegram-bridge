@@ -162,6 +162,20 @@ these per-instance crontab entries (the bootstrap does this when available):
 */1 * * * * TELEAGENT_INSTANCE=beta /absolute/repo/scripts/ensure_telegram_relay.sh >/dev/null 2>&1
 ```
 
+On hosts without cron or a persistent user service, run
+`scripts/telegram_inbox_watchdog.sh` in a dedicated tmux window in the bot's
+session, with the same instance configuration. It checks every 30 seconds and
+recreates an absent inbox window after two successful checks. Failed tmux
+checks defer recovery. Existing inbox windows are left to their supervisor;
+the guard does not restart Codex or recreate a stopped tmux session. It ends
+when its own window/session is closed. Stop that window before deliberately
+leaving the listener offline. `TELEAGENT_INBOX_WATCHDOG_INTERVAL` sets the
+positive integer interval in seconds.
+
+The listener supervisor keeps its log descriptor open and continues recovery
+when PID-file writes or cleanup fail. A host-wide open-file limit can still
+prevent the listener from operating until the host has available handles.
+
 For an inbox code update, use `scripts/deploy_listener.sh`. It restarts only the
 instance's inbox and verifies the agent pane did not change. It preserves
 state files and queued work. Do not restart Codex merely to update reply routing.
