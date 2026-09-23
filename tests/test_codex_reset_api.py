@@ -201,17 +201,31 @@ class CodexAccountProtocolTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.cli = self.root / "codex"
         self.cli.write_text(f"#!{sys.executable}\n" + '''
-import json, os, pathlib, sys
-assert sys.argv[1:] == ["app-server"]
+import json, os, pathlib, sys, time
+assert sys.argv[1] == "app-server"
 home = pathlib.Path(os.environ["CODEX_HOME"])
+account = (home / "auth.json").resolve().parent if (home / "auth.json").exists() else home
+if (account / "blocked-backfill").exists():
+    if home == account:
+        time.sleep(10)
+    overrides = dict(arg.split("=", 1) for arg in sys.argv[3::2])
+    assert json.loads(overrides["sqlite_home"]) == str(home / "sqlite")
+    assert json.loads(overrides["log_dir"]) == str(home / "log")
+    assert pathlib.Path.cwd() == home
+    assert not (home / "sessions").exists()
+    assert not (home / "state_5.sqlite").exists()
+    assert (home / "config.toml").resolve() == account / "config.toml"
+    assert (home / "auth.json").read_text() == "fixture-account"
+    (home / "auth.json").write_text("refreshed-fixture-account")
+    (account / "helper-path").write_text(str(home))
 for line in sys.stdin:
     request = json.loads(line)
-    with (home / "requests.jsonl").open("a") as log:
+    with (account / "requests.jsonl").open("a") as log:
         log.write(line)
     if request["method"] == "initialize":
         print(json.dumps({"id": request["id"], "result": {}}), flush=True)
     elif request["method"] != "initialized":
-        response = json.loads((home / "response.json").read_text())
+        response = json.loads((account / "response.json").read_text())
         print(json.dumps({"id": request["id"], **response}), flush=True)
 ''')
         self.cli.chmod(0o700)
@@ -230,6 +244,52 @@ for line in sys.stdin:
             "initialize", "initialized", "account/rateLimits/read",
         ])
 
+    def test_file_account_query_bypasses_blocked_agent_database_and_preserves_refresh(self):
+        (self.root / "auth.json").write_text("fixture-account")
+        (self.root / "config.toml").write_text('sqlite_home = "/agent/database"\n')
+        (self.root / "blocked-backfill").touch()
+        (self.root / "state_5.sqlite").write_bytes(b"live database: do not modify")
+        self.respond({"result": snapshot()["result"]})
+        with mock.patch.dict(os.environ, {"CODEX_SQLITE_HOME": "/agent/inherited-database"}):
+            live = codex_rate_limits.read_rate_limits(
+                str(self.cli), codex_home=self.root, workdir=self.root, timeout=2,
+            )
+        self.assertEqual(codex_rate_limits.remaining_percentages(live), [0])
+        self.assertEqual(live["result"]["rateLimitResetCredits"]["availableCount"], 3)
+        self.assertEqual((self.root / "auth.json").read_text(), "refreshed-fixture-account")
+        self.assertEqual((self.root / "state_5.sqlite").read_bytes(), b"live database: do not modify")
+        self.assertFalse(Path((self.root / "helper-path").read_text()).exists())
+        self.assertEqual([item["method"] for item in self.requests()], [
+            "initialize", "initialized", "account/rateLimits/read",
+        ])
+
+    def test_non_file_credentials_keep_original_account_home(self):
+        (self.root / "auth.json").write_text("possibly stale file credentials")
+        for setting in ('"keyring"', '"auto"', '"ephemeral"', '"""file"""'):
+            with self.subTest(setting=setting):
+                (self.root / "config.toml").write_text(
+                    '[profiles.alternate]\n"cli_auth_credentials_store" = ' + setting + '\n'
+                )
+                with codex_rate_limits._account_runtime(self.root, self.root) as runtime:
+                    self.assertEqual(runtime, (self.root, self.root, []))
+
+    def test_helper_cleanup_on_failure_does_not_delete_shared_credentials(self):
+        (self.root / "auth.json").write_text("fixture-account")
+        with self.assertRaisesRegex(RuntimeError, "fixture failure"):
+            with codex_rate_limits._account_runtime(self.root, self.root) as (home, _, _):
+                self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+                self.assertTrue((home / "auth.json").samefile(self.root / "auth.json"))
+                raise RuntimeError("fixture failure")
+        self.assertFalse(home.exists())
+        self.assertEqual((self.root / "auth.json").read_text(), "fixture-account")
+
+    def test_startup_timeout_is_not_reported_as_an_account_request_timeout(self):
+        (self.root / "blocked-backfill").touch()
+        with self.assertRaisesRegex(codex_rate_limits.RateLimitError, "app-server startup timed out"):
+            codex_rate_limits.read_rate_limits(
+                str(self.cli), codex_home=self.root, workdir=self.root, timeout=0.1,
+            )
+
     def test_reset_rpc_preserves_outcomes_and_idempotency_key(self):
         for outcome in ("reset", "alreadyRedeemed", "nothingToReset", "noCredit"):
             with self.subTest(outcome=outcome):
@@ -243,6 +303,22 @@ for line in sys.stdin:
                     "id": 2, "method": "account/rateLimitResetCredit/consume",
                     "params": {"idempotencyKey": "saved-at-confirmation"},
                 })
+
+    def test_confirmed_reset_uses_isolated_runtime_and_same_account_and_key(self):
+        (self.root / "auth.json").write_text("fixture-account")
+        (self.root / "config.toml").write_text('cli_auth_credentials_store = "file"\n')
+        (self.root / "blocked-backfill").touch()
+        self.respond({"result": {"outcome": "alreadyRedeemed"}})
+        result = codex_rate_limits.consume_reset_credit(
+            str(self.cli), codex_home=self.root, workdir=self.root,
+            idempotency_key="previously-confirmed-key", timeout=2,
+        )
+        self.assertEqual(result, "alreadyRedeemed")
+        self.assertEqual(self.requests()[-1], {
+            "id": 2, "method": "account/rateLimitResetCredit/consume",
+            "params": {"idempotencyKey": "previously-confirmed-key"},
+        })
+        self.assertFalse(Path((self.root / "helper-path").read_text()).exists())
 
     def test_unknown_or_failed_redemption_is_not_success(self):
         for response in ({"result": {"outcome": "unexpected"}}, {"error": {"message": "unavailable"}}):
