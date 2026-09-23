@@ -151,6 +151,9 @@ reset watchdog. For file-backed credentials, account queries run in a temporary
 private home sharing only authentication and configuration; their databases and
 logs are isolated from the live agent. This keeps session-database backfills from
 blocking usage/reset commands, and token refreshes update the original auth file.
+If helper startup stalls, the bridge retries once with a fresh helper within the
+same request deadline. It retries only before sending the account request, so an
+unconfirmed reset redemption is never repeated by startup recovery.
 Keyring/auto credential stores retain their original home because their identity
 depends on that path. Listing resets never spends one; each confirmed redemption has
 a saved idempotency key, and usage is queried again after redemption. A response

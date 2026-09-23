@@ -208,13 +208,18 @@ import json, os, pathlib, sys, time
 assert sys.argv[1] == "app-server"
 home = pathlib.Path(os.environ["CODEX_HOME"])
 account = (home / "auth.json").resolve().parent if (home / "auth.json").exists() else home
+with (account / "launches.jsonl").open("a") as log:
+    log.write(json.dumps({"pid": os.getpid(), "home": str(home)}) + "\\n")
+if (account / "stall-first-startup").exists():
+    (account / "stall-first-startup").unlink()
+    time.sleep(10)
 if (account / "blocked-backfill").exists():
     if home == account:
         time.sleep(10)
     overrides = dict(arg.split("=", 1) for arg in sys.argv[3::2])
     assert json.loads(overrides["sqlite_home"]) == str(home / "sqlite")
     assert json.loads(overrides["log_dir"]) == str(home / "log")
-    assert pathlib.Path.cwd() == home
+    assert pathlib.Path.cwd() == home.resolve()
     assert not (home / "sessions").exists()
     assert not (home / "state_5.sqlite").exists()
     assert (home / "config.toml").resolve() == account / "config.toml"
@@ -228,6 +233,8 @@ for line in sys.stdin:
     if request["method"] == "initialize":
         print(json.dumps({"id": request["id"], "result": {}}), flush=True)
     elif request["method"] != "initialized":
+        if (account / "stall-account-request").exists():
+            time.sleep(10)
         response = json.loads((account / "response.json").read_text())
         print(json.dumps({"id": request["id"], **response}), flush=True)
 ''')
@@ -292,6 +299,49 @@ for line in sys.stdin:
             codex_rate_limits.read_rate_limits(
                 str(self.cli), codex_home=self.root, workdir=self.root, timeout=0.1,
             )
+
+    def test_stalled_startup_recovers_with_fresh_helper_before_account_read(self):
+        (self.root / "auth.json").write_text("fixture-account")
+        (self.root / "stall-first-startup").touch()
+        self.respond({"result": snapshot()["result"]})
+        live = codex_rate_limits.read_rate_limits(
+            str(self.cli), codex_home=self.root, workdir=self.root, timeout=2,
+        )
+        self.assertEqual(codex_rate_limits.remaining_percentages(live), [0])
+        self.assertEqual([item["method"] for item in self.requests()], [
+            "initialize", "initialized", "account/rateLimits/read",
+        ])
+        launches = [json.loads(line) for line in (self.root / "launches.jsonl").read_text().splitlines()]
+        self.assertEqual(len(launches), 2)
+        self.assertNotEqual(launches[0]["home"], launches[1]["home"])
+        for launch in launches:
+            self.assertFalse(Path(launch["home"]).exists())
+            with self.assertRaises(ProcessLookupError):
+                os.kill(launch["pid"], 0)
+
+    def test_confirmed_reset_recovers_startup_without_sending_reset_twice(self):
+        (self.root / "stall-first-startup").touch()
+        self.respond({"result": {"outcome": "reset"}})
+        result = codex_rate_limits.consume_reset_credit(
+            str(self.cli), codex_home=self.root, workdir=self.root,
+            idempotency_key="already-confirmed", timeout=2,
+        )
+        self.assertEqual(result, "reset")
+        requests = [item for item in self.requests() if item["method"].endswith("/consume")]
+        self.assertEqual(len(requests), 1)
+        self.assertEqual(requests[0]["params"], {"idempotencyKey": "already-confirmed"})
+
+    def test_account_response_timeout_never_retries_a_possible_redemption(self):
+        (self.root / "stall-account-request").touch()
+        with self.assertRaisesRegex(codex_rate_limits.RateLimitError, "consume request timed out"):
+            codex_rate_limits.consume_reset_credit(
+                str(self.cli), codex_home=self.root, workdir=self.root,
+                idempotency_key="already-confirmed", timeout=0.5,
+            )
+        self.assertEqual(len((self.root / "launches.jsonl").read_text().splitlines()), 1)
+        self.assertEqual([item["method"] for item in self.requests()], [
+            "initialize", "initialized", "account/rateLimitResetCredit/consume",
+        ])
 
     def test_reset_rpc_preserves_outcomes_and_idempotency_key(self):
         for outcome in ("reset", "alreadyRedeemed", "nothingToReset", "noCredit"):
