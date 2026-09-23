@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -46,18 +47,20 @@ class CodexResetCommandTests(unittest.TestCase):
             max_log_chars=4000,
         )
         self.number = 0
-        self.send = self.enterContext(mock.patch.object(transport, "send_reply"))
-        self.enterContext(mock.patch.object(processes, "codex_executable", return_value="codex"))
-        self.enterContext(mock.patch.object(commands.agent_registry, "active_agent_for_pane", return_value=None))
-        self.start = self.enterContext(mock.patch.object(
+        self.contexts = ExitStack()
+        self.addCleanup(self.contexts.close)
+        self.send = self.contexts.enter_context(mock.patch.object(transport, "send_reply"))
+        self.contexts.enter_context(mock.patch.object(processes, "codex_executable", return_value="codex"))
+        self.contexts.enter_context(mock.patch.object(commands.agent_registry, "active_agent_for_pane", return_value=None))
+        self.start = self.contexts.enter_context(mock.patch.object(
             lifecycle, "start_codex_agent",
             return_value=("fixture:codex.0", "started", {"agent_id": "fixture"}),
         ))
-        self.enterContext(mock.patch.dict(os.environ, {
+        self.contexts.enter_context(mock.patch.dict(os.environ, {
             "TELEAGENT_CODEX_HOME": str(self.root / "account"),
             "CODEX_HOME": str(self.root / "wrong-account"),
         }))
-        self.legacy = self.enterContext(mock.patch.object(
+        self.legacy = self.contexts.enter_context(mock.patch.object(
             auth, "run_codex_reset_helper", side_effect=AssertionError("legacy helper called"),
         ))
 
