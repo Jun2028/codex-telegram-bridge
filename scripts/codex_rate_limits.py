@@ -4,17 +4,63 @@ import argparse
 import json
 import os
 import queue
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 class RateLimitError(RuntimeError):
     """A fresh Codex account rate-limit response could not be obtained."""
+
+
+@contextmanager
+def _account_runtime(codex_home: Path, workdir: Path):
+    """Isolate file-auth account helpers from the live conversation databases.
+
+    App-server loads/backfills session state before accepting even account RPCs.
+    An account-only helper needs no sessions. Codex's file auth backend writes
+    through auth.json, so a symlink also preserves token refreshes in the real
+    account home. Keyring/auto credentials are home-bound and must stay there.
+    """
+    source = codex_home.expanduser().resolve()
+    config_path = source / "config.toml"
+    config = config_path.read_text() if config_path.is_file() else ""
+    # Conservatively retain the original home for any non-file or ambiguous
+    # credential-store setting, including settings inside named profiles.
+    store_lines = [
+        line for line in config.splitlines()
+        if "cli_auth_credentials_store" in line.split("#", 1)[0]
+    ]
+    file_store = all(
+        re.fullmatch(
+            r'''\s*["']?cli_auth_credentials_store["']?\s*=\s*["']file["']\s*(?:#.*)?''',
+            line,
+        )
+        for line in store_lines
+    )
+    if not (source / "auth.json").is_file() or not file_store:
+        yield codex_home, workdir, []
+        return
+
+    with tempfile.TemporaryDirectory(prefix="teleagent-account-") as temporary:
+        helper = Path(temporary)
+        (helper / "auth.json").symlink_to(source / "auth.json")
+        if config_path.is_file():
+            (helper / "config.toml").symlink_to(config_path)
+        # CLI overrides take precedence over both config and inherited paths.
+        # Keep logs local too; never point a helper at the agent's SQLite files.
+        overrides = [
+            "-c", "sqlite_home=" + json.dumps(str(helper / "sqlite")),
+            "-c", "log_dir=" + json.dumps(str(helper / "log")),
+        ]
+        yield helper, helper, overrides
 
 
 def _account_request(
@@ -27,9 +73,26 @@ def _account_request(
     timeout: float = 30,
 ) -> dict[str, Any]:
     """Make one account request without starting a model turn."""
+    with _account_runtime(codex_home, workdir) as (home, cwd, overrides):
+        return _app_server_request(
+            codex_bin, codex_home=home, workdir=cwd, method=method,
+            params=params, timeout=timeout, overrides=overrides,
+        )
+
+
+def _app_server_request(
+    codex_bin: str,
+    *,
+    codex_home: Path,
+    workdir: Path,
+    method: str,
+    params: Mapping[str, Any] | None,
+    timeout: float,
+    overrides: Sequence[str],
+) -> dict[str, Any]:
     try:
         process = subprocess.Popen(
-            [codex_bin, "app-server"],
+            [codex_bin, "app-server", *overrides],
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -62,14 +125,15 @@ def _account_request(
         process.stdin.flush()
 
     def wait_for_response(request_id: int) -> dict[str, Any]:
+        operation = "app-server startup" if request_id == 1 else f"{method} request"
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise RateLimitError(f"Codex {method} request timed out")
+                raise RateLimitError(f"Codex {operation} timed out")
             try:
                 raw_line = lines.get(timeout=remaining)
             except queue.Empty as exc:
-                raise RateLimitError(f"Codex {method} request timed out") from exc
+                raise RateLimitError(f"Codex {operation} timed out") from exc
             if raw_line is None:
                 raise RateLimitError(
                     f"Codex app-server exited before response id {request_id}"

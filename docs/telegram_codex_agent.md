@@ -147,7 +147,12 @@ use an OS/container boundary when the runtime itself must lack host-file access.
 queries the account. `/codex_reset` followed by `/Confirm` explicitly redeems a
 banked reset when supported. Usage and reset queries use the bot's configured
 Codex account home. Resets use the Codex account API and do not require a local
-reset watchdog. Listing resets never spends one; each confirmed redemption has
+reset watchdog. For file-backed credentials, account queries run in a temporary
+private home sharing only authentication and configuration; their databases and
+logs are isolated from the live agent. This keeps session-database backfills from
+blocking usage/reset commands, and token refreshes update the original auth file.
+Keyring/auto credential stores retain their original home because their identity
+depends on that path. Listing resets never spends one; each confirmed redemption has
 a saved idempotency key, and usage is queried again after redemption. A response
 of `noCredit` or `nothingToReset` is reported without restarting the agent.
 Authentication recovery respects an intentionally
