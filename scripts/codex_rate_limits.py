@@ -20,6 +20,10 @@ class RateLimitError(RuntimeError):
     """A fresh Codex account rate-limit response could not be obtained."""
 
 
+class _StartupTimeout(RateLimitError):
+    """Initialization stalled before any account request was sent."""
+
+
 @contextmanager
 def _account_runtime(codex_home: Path, workdir: Path):
     """Isolate file-auth account helpers from the live conversation databases.
@@ -73,11 +77,24 @@ def _account_request(
     timeout: float = 30,
 ) -> dict[str, Any]:
     """Make one account request without starting a model turn."""
-    with _account_runtime(codex_home, workdir) as (home, cwd, overrides):
-        return _app_server_request(
-            codex_bin, codex_home=home, workdir=cwd, method=method,
-            params=params, timeout=timeout, overrides=overrides,
-        )
+    deadline = time.monotonic() + timeout
+    for attempt in range(2):
+        with _account_runtime(codex_home, workdir) as (home, cwd, overrides):
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                return _app_server_request(
+                    codex_bin, codex_home=home, workdir=cwd, method=method,
+                    params=params, timeout=remaining, overrides=overrides,
+                    startup_timeout=min(10.0, remaining / 2) if attempt == 0 else remaining,
+                )
+            except _StartupTimeout:
+                # A fresh helper can recover a transient startup stall. The
+                # old process is reaped before retrying, and both attempts
+                # share the original deadline. Never retry an account request
+                # here: a reset may already have been redeemed.
+                if attempt or time.monotonic() >= deadline:
+                    raise
+    raise AssertionError("account startup attempts exhausted")
 
 
 def _app_server_request(
@@ -89,6 +106,7 @@ def _app_server_request(
     params: Mapping[str, Any] | None,
     timeout: float,
     overrides: Sequence[str],
+    startup_timeout: float,
 ) -> dict[str, Any]:
     try:
         process = subprocess.Popen(
@@ -118,6 +136,7 @@ def _app_server_request(
     reader = threading.Thread(target=consume_stdout, name="codex-app-server-reader", daemon=True)
     reader.start()
     deadline = time.monotonic() + timeout
+    startup_deadline = min(deadline, time.monotonic() + startup_timeout)
 
     def send(message: Mapping[str, Any]) -> None:
         assert process.stdin is not None
@@ -126,14 +145,16 @@ def _app_server_request(
 
     def wait_for_response(request_id: int) -> dict[str, Any]:
         operation = "app-server startup" if request_id == 1 else f"{method} request"
+        response_deadline = startup_deadline if request_id == 1 else deadline
+        timeout_error = _StartupTimeout if request_id == 1 else RateLimitError
         while True:
-            remaining = deadline - time.monotonic()
+            remaining = response_deadline - time.monotonic()
             if remaining <= 0:
-                raise RateLimitError(f"Codex {operation} timed out")
+                raise timeout_error(f"Codex {operation} timed out")
             try:
                 raw_line = lines.get(timeout=remaining)
             except queue.Empty as exc:
-                raise RateLimitError(f"Codex {operation} timed out") from exc
+                raise timeout_error(f"Codex {operation} timed out") from exc
             if raw_line is None:
                 raise RateLimitError(
                     f"Codex app-server exited before response id {request_id}"
