@@ -120,7 +120,17 @@ mkdir -p "$TELEAGENT_LOG_DIR" "$READABLE_DIR"
 # Serialize recovery and deployment so two launchers cannot create duplicate
 # inbox windows while both observe that the previous window is absent.
 exec {inbox_start_lock}> "$TELEAGENT_LOG_DIR/telegram_inbox.start.lock"
-flock -x "$inbox_start_lock"
+# NFS can leave a blocking waiter stalled after the previous holder exits.
+# Nonblocking retries retain serialization without depending on that wakeup.
+while true; do
+  if flock -xn "$inbox_start_lock"; then
+    break
+  else
+    lock_status=$?
+    [[ "$lock_status" -eq 1 ]] || exit "$lock_status"
+  fi
+  sleep 0.2
+done
 
 link_readable_path() {
   local name="$1"
