@@ -171,7 +171,27 @@ if tmux list-windows -t "$SESSION" -F '#{window_name}' | grep -Fx "$WINDOW" >/de
     echo "Use --restart to replace the command in that window." >&2
     exit 2
   fi
+  previous_inbox_pid="$(tmux display-message -p -t "$SESSION:$WINDOW.0" '#{pane_pid}')"
   tmux kill-window -t "$SESSION:$WINDOW"
+  # The old supervisor removes its PID file on exit. Let it finish before a
+  # replacement publishes the same path, or it can erase the new listener PID.
+  python3 - "$previous_inbox_pid" <<'PY'
+import sys, time
+from pathlib import Path
+
+pid = int(sys.argv[1])
+deadline = time.monotonic() + 10
+while time.monotonic() < deadline:
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except FileNotFoundError:
+        break
+    if state == "Z":
+        break
+    time.sleep(0.05)
+else:
+    raise SystemExit("Previous Telegram inbox supervisor has not stopped; replacement deferred.")
+PY
 fi
 
 printf -v repo_q '%q' "$TELEAGENT_REPO"

@@ -20,9 +20,16 @@ class ReportLauncherTests(unittest.TestCase):
             (scripts / "relay_paths.sh").symlink_to(ROOT / "scripts/relay_paths.sh")
             (scripts / "telegram_inbox.py").write_text(
                 textwrap.dedent("""\
-                import json, os, subprocess, time
+                import json, os, signal, subprocess, time
                 from pathlib import Path
                 runtime = Path(os.environ['TELEAGENT_LOG_DIR'])
+                def shutdown(signum, frame):
+                    # Make the old supervisor's PID-file cleanup overlap a
+                    # replacement unless deployment waits for it to finish.
+                    time.sleep(1)
+                    (runtime / ('stopped-' + str(os.getpid()))).touch()
+                    raise SystemExit(0)
+                signal.signal(signal.SIGTERM, shutdown)
                 revision = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'], text=True).strip()
                 while True:
                     (runtime / 'telegram_health.state.json').write_text(json.dumps({'revision': revision, 'delivery_ok_ts': time.time()}))
@@ -57,7 +64,9 @@ class ReportLauncherTests(unittest.TestCase):
                 set -euo pipefail
                 tmux new-session -d -s deploy-fixture -n codex 'sleep 60'
                 "$TEST_RELAY_SOURCE/scripts/start_telegram_inbox.sh" --session deploy-fixture --target-pane deploy-fixture:codex.0
+                previous_listener=$(cat "$TELEAGENT_LOG_DIR/telegram_inbox.pid")
                 "$TEST_RELAY_SOURCE/scripts/deploy_listener.sh"
+                test -f "$TELEAGENT_LOG_DIR/stopped-$previous_listener"
                 """)
             )
             check.chmod(0o755)
