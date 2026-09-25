@@ -170,6 +170,14 @@ these per-instance crontab entries (the bootstrap does this when available):
 */1 * * * * TELEAGENT_INSTANCE=beta /absolute/repo/scripts/ensure_telegram_relay.sh >/dev/null 2>&1
 ```
 
+For a systemd user timer, enable user lingering when the host permits it so the
+timer runs after reboot without an SSH login. A oneshot watchdog service must
+use `KillMode=process`: its health check launches detached tmux processes managed
+by the relay supervisors, which must survive the check's exit. Launch recovery
+through the user service on hosts that terminate SSH-session processes at logout.
+The watchdog retains its lock during startup but closes it in launchers so the
+tmux server cannot block future recovery checks.
+
 On hosts without cron or a persistent user service, run
 `scripts/telegram_inbox_watchdog.sh` in a dedicated tmux window in the bot's
 session, with the same instance configuration. It checks every 30 seconds and
