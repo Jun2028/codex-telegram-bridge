@@ -72,8 +72,10 @@ if ! agent_healthy; then
   else
     printf '[%s] managed Codex agent missing or unhealthy; restarting relay stack\n' \
       "$(date -Iseconds)" >>"$LOG_PATH"
+    # The detached tmux server must not retain the watchdog's lock after this
+    # check exits. Keep the lock in this parent while the launcher runs.
     "$SCRIPT_DIR/start_codex_agent.sh" --session "$SESSION" --window "$AGENT_WINDOW" --restart \
-      >>"$LOG_PATH" 2>&1
+      9>&- >>"$LOG_PATH" 2>&1
     exit 0
   fi
 fi
@@ -86,5 +88,5 @@ if ! inbox_healthy; then
     --window "$INBOX_WINDOW" \
     --target-pane "$TARGET_PANE" \
     --codex-window "$AGENT_WINDOW" \
-    --restart >>"$LOG_PATH" 2>&1
+    --restart 9>&- >>"$LOG_PATH" 2>&1
 fi

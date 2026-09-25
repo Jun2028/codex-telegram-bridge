@@ -24,6 +24,7 @@ class ListenerRecoveryTests(unittest.TestCase):
             "start_telegram_inbox.sh",
             "telegram_inbox_supervisor.sh",
             "telegram_inbox_watchdog.sh",
+            "ensure_telegram_relay.sh",
         ):
             shutil.copy2(ROOT / "scripts" / name, scripts / name)
         runtime = root / "runtime"
@@ -43,6 +44,40 @@ class ListenerRecoveryTests(unittest.TestCase):
             TELEAGENT_INBOX_WATCHDOG_INTERVAL="1",
         )
         return repo, runtime, env
+
+    @unittest.skipUnless(shutil.which("tmux"), "tmux is required")
+    def test_relay_recovery_does_not_leave_its_lock_in_the_tmux_server(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repo, runtime, env = self.fixture(root)
+            launcher = repo / "scripts/start_codex_agent.sh"
+            launcher.write_text(textwrap.dedent("""\
+                #!/usr/bin/env bash
+                set -euo pipefail
+                # The caller still owns the lock throughout startup.
+                if flock -n "$TELEAGENT_LOG_DIR/telegram_relay.watchdog.lock" true; then
+                  echo 'watchdog released its lock before startup completed' >&2
+                  exit 1
+                fi
+                tmux new-session -d -s recovery-fixture -n codex 'sleep 90'
+                """))
+            launcher.chmod(0o755)
+            check = root / "check.sh"
+            check.write_text(textwrap.dedent("""\
+                #!/usr/bin/env bash
+                set -euo pipefail
+                "$TELEAGENT_REPO/scripts/ensure_telegram_relay.sh"
+                tmux has-session -t recovery-fixture
+                # Subsequent checks must run while the recovered server lives.
+                flock -n "$TELEAGENT_LOG_DIR/telegram_relay.watchdog.lock" true
+                echo 'recovered tmux is alive; watchdog lock is available'
+                """))
+            result = subprocess.run(
+                [str(ROOT / "scripts/tmux_isolated_test.sh"), "--", "bash", str(check)],
+                env=env, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("watchdog lock is available", result.stdout)
 
     def test_supervisor_recovers_when_log_reopen_and_pid_write_fail(self):
         with tempfile.TemporaryDirectory() as directory:
