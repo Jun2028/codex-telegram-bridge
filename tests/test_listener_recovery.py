@@ -164,8 +164,15 @@ class ListenerRecoveryTests(unittest.TestCase):
                     [launcher, '--session', 'recovery-fixture', '--target-pane', 'recovery-fixture:codex.0'],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                 ) for _ in range(2)]
-                for process in launches:
-                    process.communicate(timeout=10)
+                try:
+                    for process in launches:
+                        # The launcher allows 15 seconds for listener startup.
+                        process.communicate(timeout=20)
+                finally:
+                    for process in launches:
+                        if process.poll() is None:
+                            process.terminate()
+                            process.communicate(timeout=5)
                 assert sorted(process.returncode for process in launches) == [0, 2]
                 windows = run('tmux', 'list-windows', '-t', 'recovery-fixture', '-F', '#{window_name}').splitlines()
                 assert windows.count('inbox') == 1, windows
@@ -185,10 +192,14 @@ class ListenerRecoveryTests(unittest.TestCase):
                 windows = run('tmux', 'list-windows', '-t', 'recovery-fixture', '-F', '#{window_name}').splitlines()
                 assert 'inbox' not in windows, windows
                 failure.unlink()
-                deadline = time.monotonic() + 10
+                deadline = time.monotonic() + 20
                 while time.monotonic() < deadline:
                     pid_file = runtime / 'telegram_inbox.pid'
-                    if pid_file.exists() and pid_file.read_text() != previous:
+                    # The supervisor publishes its PID before the launcher
+                    # finishes. Killing tmux then can leave that launcher
+                    # holding open fixture files during NFS cleanup.
+                    started = 'Listener started' in (runtime / 'telegram_inbox.watchdog.log').read_text()
+                    if started and pid_file.exists() and pid_file.read_text() != previous:
                         pid = int(pid_file.read_text())
                         os.kill(pid, 0)
                         break
@@ -201,7 +212,7 @@ class ListenerRecoveryTests(unittest.TestCase):
                 """))
             result = subprocess.run(
                 [str(ROOT / "scripts/tmux_isolated_test.sh"), "--", sys.executable, str(check)],
-                env=env, capture_output=True, text=True, timeout=35,
+                env=env, capture_output=True, text=True, timeout=60,
             )
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("listener restored; agent pane preserved", result.stdout)
