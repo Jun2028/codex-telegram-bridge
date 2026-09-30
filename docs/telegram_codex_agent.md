@@ -161,8 +161,14 @@ of `noCredit` or `nothingToReset` is reported without restarting the agent.
 Authentication recovery respects an intentionally
 stopped agent.
 
-The Codex supervisor restarts unexpected exits with bounded backoff; the
-listener watchdog recreates a missing managed pane. For host restarts, install
+The Codex supervisor restarts unexpected exits with bounded backoff and resumes
+the exact root conversation recorded for that bot. It validates the Codex home
+and workspace and never selects another recent thread with `--last`. If an
+established session cannot be validated, recovery waits instead of opening a
+fresh chat. Explicit `/restart_agent` still starts a fresh conversation. For
+operator recovery, `codex_agent_supervisor.sh --resume` restores the existing
+registered conversation on its initial launch as well.
+The listener watchdog recreates a missing managed pane. For host restarts, install
 these per-instance crontab entries (the bootstrap does this when available):
 
 ```cron

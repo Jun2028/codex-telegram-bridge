@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 from contextlib import closing
 import json
+import os
 import socket
 import sqlite3
 import time
@@ -53,7 +54,10 @@ def codex_session_start_epoch(session_path: str | None) -> float | None:
         return None
 
 
-def codex_session_goal_status(session_path: str | Path | None) -> str:
+def codex_session_goal_status(
+    session_path: str | Path | None,
+    sqlite_home: str | Path | None = None,
+) -> str:
     """Read the bound thread's persistent goal, without inspecting terminal prose."""
     if not session_path:
         return "unknown"
@@ -70,7 +74,8 @@ def codex_session_goal_status(session_path: str | Path | None) -> str:
             for parent in path.parents
             if parent.name in {"sessions", "archived_sessions"}
         )
-        db = session_root.parent / "goals_1.sqlite"
+        db_root = Path(sqlite_home).expanduser() if sqlite_home else session_root.parent
+        db = db_root / "goals_1.sqlite"
         with closing(
             sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=0.2)
         ) as conn:
@@ -302,7 +307,9 @@ def format_system_status(
     )
     if auth_failure:
         activity = "sign-in required — /reauth in private"
-    goal_text = codex_session_goal_status(session_path)
+    goal_text = codex_session_goal_status(
+        session_path, sqlite_home=os.environ.get("CODEX_SQLITE_HOME")
+    )
     lines = [
         f"{socket.gethostname()} · {now}",
         f"state: {desired} · {activity}",

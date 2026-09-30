@@ -3,10 +3,11 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-Usage: scripts/codex_agent_supervisor.sh [--model MODEL] [--reasoning-effort LEVEL]
+Usage: scripts/codex_agent_supervisor.sh [--model MODEL] [--reasoning-effort LEVEL] [--resume]
 
 Runs the Telegram Codex agent persistently. Unexpected exits are logged and
-restarted with bounded exponential backoff.
+restart the recorded conversation with bounded exponential backoff.
+--resume also restores that conversation on the initial launch.
 EOF
 }
 
@@ -26,6 +27,7 @@ MAX_DELAY="${TELEAGENT_CODEX_SUPERVISOR_MAX_DELAY:-60}"
 LOG_PATH="${TELEAGENT_CODEX_SUPERVISOR_LOG:-$TELEAGENT_LOG_DIR/codex_agent.supervisor.log}"
 DS_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
 DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"
+RESUME_LINKED_SESSION=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -36,6 +38,10 @@ while [[ $# -gt 0 ]]; do
     --reasoning-effort)
       REASONING_EFFORT="${2:-}"
       shift 2
+      ;;
+    --resume)
+      RESUME_LINKED_SESSION=1
+      shift
       ;;
     -h|--help)
       usage
@@ -78,6 +84,22 @@ trap stop_supervisor INT TERM HUP
 failure_count=0
 restart_count=0
 while [[ "$stop_requested" -eq 0 ]]; do
+  # A maintenance stop or /kill_agent must also prevent crash recovery. The
+  # initial launch is explicit; subsequent launches honor the live preference.
+  if (( restart_count > 0 )) && [[ -f "$TELEAGENT_LOG_DIR/telegram_agent_lifecycle.state.json" ]]; then
+    if ! python3 - "$TELEAGENT_LOG_DIR/telegram_agent_lifecycle.state.json" <<'PY'
+import json
+import sys
+with open(sys.argv[1], encoding="utf-8") as handle:
+    state = json.load(handle)
+raise SystemExit(0 if state.get("desired") == "running" else 1)
+PY
+    then
+      printf '[%s] automatic recovery stopped by lifecycle state\n' \
+        "$(date -Iseconds)" >> "$LOG_PATH"
+      break
+    fi
+  fi
   started_at="$(date +%s)"
   printf '[%s] starting codex model=%s reasoning=%s access=%s restart_count=%s\n' \
     "$(date -Iseconds)" "$MODEL" "$REASONING_EFFORT" "$ACCESS_MODE" \
@@ -129,6 +151,27 @@ while [[ "$stop_requested" -eq 0 ]]; do
   fi
   if [[ "$use_ds" -eq 0 ]]; then
     codex_args+=(--enable fast_mode)
+  fi
+  if (( restart_count > 0 || RESUME_LINKED_SESSION == 1 )); then
+    resume_session=""
+    if [[ -z "${TELEAGENT_AGENT_META:-}" ]] || ! resume_session="$(
+      python3 "$SCRIPT_DIR/telegram_agent_registry.py" resume-session \
+        --meta-json "$TELEAGENT_AGENT_META" --codex-home "$CODEX_HOME" \
+        2>>"$LOG_PATH"
+    )"; then
+      printf '[%s] recovery waiting: cannot validate the recorded session; no new chat started\n' \
+        "$(date -Iseconds)" >> "$LOG_PATH"
+      sleep "$MAX_DELAY" &
+      child_pid=$!
+      wait "$child_pid" || true
+      child_pid=""
+      continue
+    fi
+    if [[ -n "$resume_session" ]]; then
+      codex_args=(resume "$resume_session" "${codex_args[@]}")
+      printf '[%s] resuming codex session=%s\n' \
+        "$(date -Iseconds)" "$resume_session" >> "$LOG_PATH"
+    fi
   fi
   set +e
   # Codex is an interactive TUI and must remain the foreground process for the

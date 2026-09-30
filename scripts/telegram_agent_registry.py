@@ -126,10 +126,12 @@ def codex_session_metadata(session_path: Path) -> dict[str, Any]:
 def codex_session_is_subagent(session_path: Path) -> bool:
     """Return whether a rollout belongs to a spawned multi-agent worker."""
     metadata = codex_session_metadata(session_path)
+    source = metadata.get("source")
     return bool(
         metadata.get("agent_path")
         or metadata.get("agent_nickname")
         or metadata.get("multi_agent_version")
+        or (isinstance(source, dict) and "subagent" in source)
     )
 
 
@@ -702,6 +704,37 @@ def clear_codex_session_link(meta: dict[str, Any], reason: str) -> dict[str, Any
     return meta
 
 
+def supervisor_resume_session(meta_path: Path, codex_home: Path) -> str:
+    """Resolve only this supervisor's recorded root thread for crash recovery.
+
+    Never use --last or an mtime scan here: another bot or helper may have
+    written a newer session. An invalid established binding must not silently
+    turn recovery into a fresh chat.
+    """
+    meta = read_json(meta_path)
+    if not isinstance(meta, dict):
+        raise ValueError("agent metadata is missing or invalid")
+    recorded_home = codex_home_from_meta(meta)
+    if recorded_home is None or not _same_path(recorded_home, codex_home):
+        raise ValueError("agent metadata belongs to a different Codex home")
+    session_text = meta.get("codex_session_path")
+    if not session_text:
+        # The process can exit before its first prompt creates a thread.
+        return ""
+    if not isinstance(session_text, str):
+        raise ValueError("invalid recorded session path")
+    session_path = Path(session_text)
+    if not codex_session_matches_agent(meta, session_path):
+        raise ValueError("recorded session does not match this agent")
+    if codex_session_is_subagent(session_path):
+        raise ValueError("refusing to resume a subagent session")
+    session_id = codex_session_metadata(session_path).get("id")
+    try:
+        return str(uuid.UUID(str(session_id)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("recorded session has no valid thread ID") from exc
+
+
 def refresh_codex_session_link(
     meta: dict[str, Any],
     target_pane: str | None = None,
@@ -887,7 +920,19 @@ def main() -> int:
     current_parser.add_argument("--refresh", action="store_true")
     current_parser.add_argument("--shell-exports", action="store_true")
 
+    resume_parser = subparsers.add_parser("resume-session")
+    resume_parser.add_argument("--meta-json", type=Path, required=True)
+    resume_parser.add_argument("--codex-home", type=Path, required=True)
+
     args = parser.parse_args()
+    if args.command == "resume-session":
+        try:
+            session_id = supervisor_resume_session(args.meta_json, args.codex_home)
+        except ValueError as exc:
+            raise SystemExit(f"cannot resume recorded Codex session: {exc}") from exc
+        if session_id:
+            print(session_id)
+        return 0
     if args.command == "create":
         meta = create_agent(
             repo_root=args.repo_root.resolve(),

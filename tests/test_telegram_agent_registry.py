@@ -82,6 +82,80 @@ class TelegramAgentRegistryTests(unittest.TestCase):
             registry.codex_session_matches_agent(meta, other_session)
         )
 
+    def test_supervisor_recovers_exact_root_instead_of_newer_session(self) -> None:
+        thread_id = "11111111-1111-4111-8111-111111111111"
+        session = self._session(
+            "original.jsonl", "2026-07-19T04:00:00Z",
+            payload_extra={"id": thread_id, "source": "cli"},
+        )
+        self._session(
+            "unrelated-newer.jsonl", "2026-07-19T05:00:00Z",
+            payload_extra={"id": "22222222-2222-4222-8222-222222222222"},
+        )
+        meta_path = self.root / "supervisor-meta.json"
+        meta_path.write_text(json.dumps({
+            "codex_home": str(self.home / ".codex"),
+            "repo_root": str(self.repo),
+            "codex_session_path": str(session),
+        }))
+        self.assertEqual(
+            registry.supervisor_resume_session(meta_path, self.home / ".codex"),
+            thread_id,
+        )
+
+    def test_supervisor_rejects_invalid_recovery_bindings(self) -> None:
+        session = self._session(
+            "original.jsonl", "2026-07-19T04:00:00Z",
+            payload_extra={"id": "11111111-1111-4111-8111-111111111111"},
+        )
+        meta_path = self.root / "supervisor-meta.json"
+        valid = {
+            "codex_home": str(self.home / ".codex"),
+            "repo_root": str(self.repo),
+            "codex_session_path": str(session),
+        }
+        for change in (
+            {"codex_home": str(self.root / "another-bot-home")},
+            {"repo_root": str(self.root / "another-workspace")},
+            {"codex_session_path": str(self.root / "missing.jsonl")},
+        ):
+            with self.subTest(change=change):
+                meta_path.write_text(json.dumps({**valid, **change}))
+                with self.assertRaises(ValueError):
+                    registry.supervisor_resume_session(meta_path, self.home / ".codex")
+
+    def test_supervisor_rejects_subagent_and_malformed_thread_id(self) -> None:
+        meta_path = self.root / "supervisor-meta.json"
+        for payload in (
+            {"id": "11111111-1111-4111-8111-111111111111",
+             "source": {"subagent": {"thread_spawn": {"parent_thread_id": "parent"}}}},
+            {"id": "not-a-thread-id", "source": "cli"},
+        ):
+            with self.subTest(payload=payload):
+                session = self._session(
+                    "invalid.jsonl", "2026-07-19T04:00:00Z", payload_extra=payload,
+                )
+                meta_path.write_text(json.dumps({
+                    "codex_home": str(self.home / ".codex"),
+                    "repo_root": str(self.repo),
+                    "codex_session_path": str(session),
+                }))
+                with self.assertRaises(ValueError):
+                    registry.supervisor_resume_session(meta_path, self.home / ".codex")
+
+    def test_supervisor_allows_fresh_retry_only_without_recorded_thread(self) -> None:
+        meta_path = self.root / "supervisor-meta.json"
+        meta_path.write_text(json.dumps({
+            "codex_home": str(self.home / ".codex"),
+            "codex_session_path": None,
+        }))
+        self.assertEqual(
+            registry.supervisor_resume_session(meta_path, self.home / ".codex"), "",
+        )
+        meta_path.write_text("corrupt JSON")
+        with self.assertRaises(ValueError):
+            registry.supervisor_resume_session(meta_path, self.home / ".codex")
+
     def test_explicit_home_fallback_never_scans_default_home(self) -> None:
         private_home = self.root / "private-codex"
         private_sessions = private_home / "sessions" / "2026" / "07" / "19"

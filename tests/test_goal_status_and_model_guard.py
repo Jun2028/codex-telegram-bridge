@@ -66,6 +66,20 @@ class GoalStatusTests(unittest.TestCase):
             }}) + "\n")
         self.assertEqual(status.codex_session_goal_status(self.session), "off")
 
+    def test_relocated_database_is_authoritative(self):
+        scratch = self.home / "scratch-databases"
+        scratch.mkdir()
+        with sqlite3.connect(scratch / "goals_1.sqlite") as db:
+            db.execute("CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY, status TEXT)")
+            db.execute("INSERT INTO thread_goals VALUES ('bound-thread', 'active')")
+        self.assertEqual(
+            status.codex_session_goal_status(self.session, sqlite_home=scratch), "active"
+        )
+        self.assertEqual(
+            status.codex_session_goal_status(self.session, sqlite_home=scratch / "missing"),
+            "unknown",
+        )
+
 
 class ModelSwitchGuardTests(unittest.TestCase):
     def test_quota_popup_receives_no_paste_or_keys(self):
