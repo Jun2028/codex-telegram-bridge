@@ -346,9 +346,9 @@ def parse_agent_launch_payload(payload: str) -> tuple[str, str, bool]:
                 )
         else:
             reasoning_effort = (
-                _settings.LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT
+                "medium"
                 if model == _settings.ASTRA_CODEX_AGENT_MODEL
-                else "high"
+                else _settings.LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT
             )
     if (
         model in _settings.DEEPSEEK_CODEX_AGENT_MODELS

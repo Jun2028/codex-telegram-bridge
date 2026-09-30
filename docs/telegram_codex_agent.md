@@ -52,8 +52,8 @@ see [delivery guarantees](architecture.md).
 ## Model controls
 
 `/models` lists aliases. Use `/model NAME [LEVEL]` or `/reasoning LEVEL`.
-The managed default model is `gpt-6.1-sol` (GPT-6.1 Sol).
-`latest` and `astra` select GPT-6 Astra; other aliases are `sol`, `luna`, `spark`,
+The managed default model is `gpt-6.1-sol` (GPT-6.1 Sol); `sol` and `latest`
+select it. `astra` selects GPT-6 Astra; the other aliases are `luna`, `spark`,
 `ds-flash` and `ds-pro`. Supported reasoning values depend on the model.
 `ds-flash` launches the GA `deepseek-flash` slug.
 The last actual `turn_context` is the authority for the model shown in status.

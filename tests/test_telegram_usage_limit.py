@@ -364,11 +364,29 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(model, telegram_inbox.ASTRA_CODEX_AGENT_MODEL)
         self.assertIsNone(reasoning)
 
-    def test_parse_live_model_payload_accepts_astra_effort(self) -> None:
+    def test_parse_live_model_payload_accepts_latest_effort(self) -> None:
         model, reasoning = telegram_inbox.parse_live_model_payload("latest xhigh")
 
-        self.assertEqual(model, telegram_inbox.ASTRA_CODEX_AGENT_MODEL)
+        self.assertEqual(model, telegram_inbox.LATEST_OPENAI_CODEX_AGENT_MODEL)
         self.assertEqual(reasoning, "xhigh")
+
+    def test_latest_and_sol_aliases_select_gpt_6_1_sol(self) -> None:
+        for alias in ("latest", "sol"):
+            with self.subTest(alias=alias):
+                model, reasoning, explicit = (
+                    telegram_inbox.parse_agent_launch_payload(alias)
+                )
+                self.assertEqual(model, telegram_inbox.SOL_61_CODEX_AGENT_MODEL)
+                self.assertEqual(reasoning, "high")
+                self.assertTrue(explicit)
+
+                live_model, live_reasoning = (
+                    telegram_inbox.parse_live_model_payload(alias)
+                )
+                self.assertEqual(
+                    live_model, telegram_inbox.SOL_61_CODEX_AGENT_MODEL
+                )
+                self.assertIsNone(live_reasoning)
 
     def test_parse_live_model_payload_rejects_unsupported_astra_effort(self) -> None:
         with self.assertRaisesRegex(ValueError, "GPT-6 Astra reasoning"):
