@@ -58,6 +58,7 @@ def help_text() -> str:
 def models_text() -> str:
     return (
         "Send /model NAME [LEVEL].\n\n"
+        "gpt-6.1-sol — GPT-6.1 Sol (default)\n"
         "astra / latest — GPT-6 Astra\nsol — GPT-5.6 Sol\n"
         "luna — GPT-5.6 Luna\nspark — GPT-5.3 Codex Spark\n"
         "ds-flash / ds-pro — DeepSeek V4\n\n"

@@ -733,7 +733,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         start_agent.assert_called_once()
         call = start_agent.call_args.kwargs
         self.assertTrue(call["restart"])
-        self.assertEqual(call["model"], "gpt-5.6-sol")
+        self.assertEqual(call["model"], "gpt-6.1-sol")
         self.assertEqual(call["reasoning_effort"], "max")
         self.assertNotIn("prompt", call)
         self.assertIn("reasoning=max", send_reply.call_args_list[0].args[2])
@@ -855,7 +855,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(call["reasoning_effort"], "high")
         self.assertEqual(
             telegram_inbox.DEFAULT_CODEX_AGENT_MODEL,
-            "gpt-5.6-sol",
+            "gpt-6.1-sol",
         )
 
     def test_restart_agent_accepts_ds_flash_with_max(self) -> None:

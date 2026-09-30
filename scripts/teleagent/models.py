@@ -41,14 +41,16 @@ def normalize_codex_agent_model(value: str, *, live: bool = False) -> str:
     if model not in supported:
         if live:
             raise ValueError(
-                "unknown model; use latest/astra (gpt-6-astra), "
+                "unknown model; use gpt-6.1-sol (the default), "
+                "latest/astra (gpt-6-astra), "
                 "sol (gpt-5.6-sol), luna (gpt-5.6-luna), "
                 "spark (gpt-5.3-codex-spark), or "
                 "ds-flash (deepseek-flash) / "
                 "ds-pro (deepseek-v4-pro)"
             )
         raise ValueError(
-            "unknown model; use latest/astra (gpt-6-astra), "
+            "unknown model; use gpt-6.1-sol (the default), "
+            "latest/astra (gpt-6-astra), "
             "sol (gpt-5.6-sol), luna (gpt-5.6-luna), "
             "spark (gpt-5.3-codex-spark), or "
             "ds-flash (deepseek-flash) / "
