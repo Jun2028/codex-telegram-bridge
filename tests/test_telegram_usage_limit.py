@@ -336,7 +336,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         )
 
         self.assertEqual(model, telegram_inbox.ASTRA_CODEX_AGENT_MODEL)
-        self.assertEqual(reasoning, "high")
+        self.assertEqual(reasoning, "medium")
         self.assertTrue(explicit)
 
     def test_parse_agent_launch_payload_rejects_unsupported_astra_effort(self) -> None:
@@ -1161,7 +1161,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
             mock.patch.object(
                 _relay_models,
                 "current_codex_model_and_reasoning_effort",
-                return_value=(telegram_inbox.ASTRA_CODEX_AGENT_MODEL, "high"),
+                return_value=(telegram_inbox.ASTRA_CODEX_AGENT_MODEL, "medium"),
             ),
         ):
             selected = telegram_inbox.set_codex_model(
@@ -1170,13 +1170,13 @@ class TelegramUsageLimitTests(unittest.TestCase):
             )
 
         self.assertEqual(
-            selected, (telegram_inbox.ASTRA_CODEX_AGENT_MODEL, "high")
+            selected, (telegram_inbox.ASTRA_CODEX_AGENT_MODEL, "medium")
         )
         self.assertEqual(
             send_keys.call_args_list.count(
                 mock.call("tele-agent:codex.0", "Down")
             ),
-            3,
+            2,
         )
 
     def test_live_model_selector_switches_to_ds_flash_without_restart(self) -> None:

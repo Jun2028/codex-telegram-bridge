@@ -19,6 +19,9 @@ WINDOW="codex"
 RESTART=0
 CODEX_MODEL="${TELEAGENT_CODEX_MODEL:-gpt-5.6-sol}"
 CODEX_REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-high}"
+if [[ "$CODEX_MODEL" == "gpt-6-astra" && -z "${TELEAGENT_CODEX_REASONING_EFFORT:-}" ]]; then
+  CODEX_REASONING_EFFORT="medium"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in

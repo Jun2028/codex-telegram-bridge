@@ -207,6 +207,8 @@ def set_codex_model(
     default_effort = (
         "max"
         if selected_model in _settings.DEEPSEEK_CODEX_AGENT_MODELS
+        else "medium"
+        if selected_model == _settings.ASTRA_CODEX_AGENT_MODEL
         else "high"
     )
     selected_effort = parse_live_reasoning_effort(reasoning_effort or default_effort)

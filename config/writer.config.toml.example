@@ -1,6 +1,6 @@
 # Copy to $CODEX_HOME/writer.config.toml and set the absolute prompt path.
 model = "gpt-6-astra"
-model_reasoning_effort = "high"
+model_reasoning_effort = "medium"
 model_instructions_file = "/absolute/path/to/tele-agent/config/writer.md"
 
 developer_instructions = """

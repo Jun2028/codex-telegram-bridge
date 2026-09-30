@@ -14,7 +14,7 @@ fallback. Sign in using the installed Codex CLI before starting the agent.
 cp config/relay.env.template config/relay.env
 # Edit this ignored file for your installed provider, for example:
 # export TELEAGENT_CODEX_MODEL="gpt-6-astra"
-# export TELEAGENT_CODEX_REASONING_EFFORT="xhigh"
+# export TELEAGENT_CODEX_REASONING_EFFORT="medium"
 python3 scripts/setup_telegram_notify.py
 python3 scripts/notify.py --title "notify test" --message "dry run" --dry-run
 scripts/start_codex_agent.sh

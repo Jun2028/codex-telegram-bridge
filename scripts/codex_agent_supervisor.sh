@@ -16,7 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/relay_paths.sh"
 
 MODEL="${TELEAGENT_CODEX_MODEL:-gpt-5.6-sol}"
-REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-high}"
+REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-}"
 CODEX_BIN="${TELEAGENT_CODEX_BIN:-codex}"
 CHECK_FOR_UPDATE_ON_STARTUP="${TELEAGENT_CODEX_CHECK_FOR_UPDATE_ON_STARTUP:-false}"
 ACCESS_MODE="${TELEAGENT_CODEX_ACCESS_MODE:-full-access}"
@@ -53,6 +53,13 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$REASONING_EFFORT" ]]; then
+  REASONING_EFFORT="high"
+  if [[ "$MODEL" == "gpt-6-astra" ]]; then
+    REASONING_EFFORT="medium"
+  fi
+fi
 
 case "$CHECK_FOR_UPDATE_ON_STARTUP" in
   true|false) ;;
