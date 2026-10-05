@@ -159,6 +159,21 @@ class TelegramRelayQueueTests(unittest.TestCase):
         self.assertEqual(checkpoint, (self.session, self.session.stat().st_size))
         marker_search.assert_not_called()
 
+    def test_queued_same_chat_answer_can_steer_without_interrupt(self) -> None:
+        telegram_inbox.enqueue_telegram_relay(self.queue_state, self.update(42, "answer"), self.args.target_pane)
+        with (
+            mock.patch.object(_relay_submission, "codex_session_checkpoint", return_value=(self.session, 0)),
+            mock.patch.object(_relay_submission, "codex_session_turn_active", return_value=True),
+            mock.patch.object(_relay_queue, "same_chat_can_steer", return_value=False) as steer,
+            mock.patch.object(_relay_commands, "handle_update", return_value={}) as handle,
+        ):
+            self.assertEqual(_relay_queue.drain_telegram_relay_queue(self.args, {}, "token", "123", self.log_path), [])
+            handle.assert_not_called()
+            steer.return_value = True
+            _relay_queue.drain_telegram_relay_queue(self.args, {}, "token", "123", self.log_path)
+            handle.assert_called_once()
+            self.assertEqual(telegram_inbox.telegram_relay_queue_tasks(self.queue_state), [])
+
     def test_voice_update_is_an_agent_message(self) -> None:
         update = self.update(9, "")
         update["message"].pop("text")

@@ -270,7 +270,7 @@ def dispatch_telegram_update(
                 args,
                 token,
                 source_chat_id,
-                f"Queued ({task['id']}). /queue shows waiting work; /cancel {task['id']} removes it.",
+                "Message waiting. /queue shows the list; /cancel removes it if it is the only waiting message.",
                 message_thread_id=message.get("message_thread_id"),
             )
         return "queued"
@@ -533,9 +533,10 @@ def drain_telegram_relay_queue(
             return []
     checkpoint = _submission.codex_session_checkpoint(args.target_pane)
     if checkpoint is not None and _submission.codex_session_turn_active(checkpoint[0]):
-        # Waiting work never interrupts an active turn, including Goal mode.
-        # The explicit /interrupt command is the only abort-and-replace path.
-        return []
+        # Use the same non-interrupting steering policy as new input. Other
+        # chats and Goal-mode work still wait; never abort a turn to drain.
+        if not same_chat_can_steer(args, update):
+            return []
 
     message_id = task.get("message_id")
     marker = (

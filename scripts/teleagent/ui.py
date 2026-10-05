@@ -41,7 +41,7 @@ def help_text() -> str:
         "One bot = one agent and one conversation.\n\n"
         "/status — working, idle, stopped or recovering\n"
         "/queue — waiting messages and delivery problems\n"
-        "/cancel ID — remove a waiting message\n"
+        "/cancel [number] — remove a waiting message\n"
         "/interrupt NEW TASK — stop this turn and submit NEW TASK\n"
         "/models — model choices; /reasoning LEVEL changes effort\n"
         "/timed HOURS MESSAGE — send a task later\n\n"
@@ -121,8 +121,20 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
             }
             if visible(converted):
                 (unconfirmed if phase == "pending" else failures).append(converted)
+    # Keep the queue actionable; old failures remain in the audit state.
+    recent_failures = []
+    for item in failures:
+        stamp = (item.get("failed_ts") or item.get("stalled_ts")
+                 or item.get("created_ts") or item.get("received_ts")
+                 or item.get("queued_ts") or task_message(item).get("date"))
+        try:
+            if time.time() - float(stamp) <= 24 * 60 * 60:
+                recent_failures.append(item)
+        except (TypeError, ValueError):
+            pass
+    failures = recent_failures
     lines = [f"Waiting: {len(tasks)} · incoming: {len(pending)}"]
-    for task in tasks[:8]:
+    for number, task in enumerate(tasks[:8], 1):
         message = task_message(task)
         text = " ".join(
             str(message.get("text") or message.get("caption") or "[attachment]").split()
@@ -130,13 +142,13 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
         age = status.format_uptime(
             time.time() - float(task.get("queued_ts") or time.time())
         )
-        lines.append(f"{task['id']} · {age} · {text}")
+        lines.append(f"{number}. {text} · {age} · /cancel {number}")
     if unconfirmed:
         lines.append(
             f"Delivery check waiting: {len(unconfirmed)} sent message(s). Check /status before resending."
         )
     if failures:
-        lines.append(f"Delivery problems: {len(failures)}")
+        lines.append(f"Past delivery problems (not waiting): {len(failures)}")
     for task in failures[-3:]:
         message = task_message(task)
         detail = str(
@@ -167,7 +179,7 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
         lines.append(f"{date} · #{message.get('message_id', '?')}: {detail}")
     if tasks:
         lines.append(
-            "/cancel ID removes a waiting message; /cancel all removes this visible queue."
+            "/cancel removes the only waiting message; /cancel 1 removes item 1; /cancel all removes this visible queue."
         )
     else:
         lines.append(
@@ -181,13 +193,22 @@ def queue_text(args, chat_id: str, is_group: bool, topic_id: int | None) -> str:
 def cancel_queued(
     args, payload: str, chat_id: str, is_group: bool, topic_id: int | None
 ) -> str:
-    if not payload:
-        return (
-            "Use /cancel ID from /queue, or /cancel all. The running task is unchanged."
-        )
     path = Path(args.relay_queue_state_path)
     with state.locked(path):
         data = state.read_json_object(path)
+        visible = [item for item in data.get("tasks", [])
+                   if visible_task(item, chat_id, is_group, topic_id)]
+        payload = payload.strip()
+        if not payload:
+            if len(visible) != 1:
+                return ("No messages waiting." if not visible else
+                        "More than one message is waiting. Use /queue, then /cancel 1 (the list number), or /cancel all.")
+            payload = str(visible[0].get("id"))
+        elif payload.isdecimal():
+            number = int(payload)
+            if not 1 <= number <= len(visible):
+                return "No waiting message with that list number. Use /queue to check."
+            payload = str(visible[number - 1].get("id"))
         removed = []
         kept = []
         for item in data.get("tasks", []):

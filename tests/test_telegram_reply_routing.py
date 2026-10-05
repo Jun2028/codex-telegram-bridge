@@ -130,6 +130,34 @@ class TelegramReplyRoutingTests(unittest.TestCase):
             ["private-chat", "owner-private"],
         )
 
+    def test_async_group_question_retains_route_for_following_final(self):
+        telegram_inbox.set_reply_route_chat_id(
+            self.routes, "group-chat", is_group=True, route_id="u1", message_thread_id=7
+        )
+        self.write_records(
+            self.user("[TELEGRAM USER MESSAGE message_id=1 route_id=u1 from user] task"),
+            {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+                "type": "AgentMessage", "id": "question1", "phase": "final_answer",
+                "delivery": "async", "content": [{"type": "Text", "text": "Which repo?"}],
+            }}},
+        )
+        with mock.patch.object(_relay_transport, "send_reply") as send:
+            telegram_inbox.drain_codex_agent_messages(
+                "token", "owner-private", self.meta, self.messages, None, {},
+                sessions_root=self.root, route_state_path=self.routes,
+            )
+            saved = json.loads(self.messages.read_text())
+            self.assertTrue(saved["route_locked"])
+            self.assertEqual(saved["active_chat_id"], "group-chat")
+            self.assertEqual(send.call_args.args[2], "Which repo?")
+            self.write_records(self.assistant("final1", "final_answer", "Done"))
+            telegram_inbox.drain_codex_agent_messages(
+                "token", "owner-private", self.meta, self.messages, None, {},
+                sessions_root=self.root, route_state_path=self.routes,
+            )
+            self.assertEqual(send.call_count, 2)
+            self.assertTrue(all(c.args[1] == "group-chat" for c in send.call_args_list))
+
     def test_missing_route_fails_closed_to_owner_private_chat(self) -> None:
         self.write_records(
             self.user(

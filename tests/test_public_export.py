@@ -29,6 +29,13 @@ class PublicExportTests(unittest.TestCase):
         }:
             self.assertFalse(export_public.allowed(name, {name}), name)
 
+    def test_export_rejects_personal_paths_and_credentials(self):
+        for data in (b"/home/" + b"private-person/work", b"/nfs/home/" + b"svu/private-person/work",
+                     b"sk-" + b"x" * 40):
+            with self.assertRaises(ValueError):
+                export_public.check_public_content("fixture.py", data)
+        export_public.check_public_content("fixture.py", b"/home/operator/example")
+
     def test_public_readme_omits_private_feature_section(self):
         readme = export_public.SOURCE.joinpath("README.md").read_text()
         public = export_public.public_readme(readme)

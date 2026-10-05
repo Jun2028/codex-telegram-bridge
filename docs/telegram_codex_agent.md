@@ -33,7 +33,8 @@ queue counts and the age of the last reply check. `/ping` checks the listener.
 `/queue` lists waiting work, pending receipt checks and delivery problems with
 dates and reasons. An unconfirmed receipt does not mean the task failed;
 check before resending. Cancel an unsent item with
-`/cancel ID`; cancelling a queued item does not interrupt the running task.
+`/cancel` when only one item is waiting, `/cancel 1` for the numbered item in
+`/queue`, or `/cancel all`. Cancellation does not interrupt the running task.
 
 During an ordinary turn, input from the bound chat can steer that task. Inputs
 from another chat/topic wait in the single FIFO. Goal-mode work is not paused
@@ -42,6 +43,8 @@ abort and replace the current turn. `/kill_agent` persistently stops the agent
 while leaving the Telegram listener online.
 
 The agent's normal commentary and final replies are forwarded automatically.
+Async clarification questions are forwarded without ∎ and keep the turn bound
+to its chat so replies can steer the ongoing work.
 Tool output, reasoning, prompts and raw logs are not forwarded. Finals in the
 private chat receive `∎` unless `TELEAGENT_SUPPRESS_FINAL_MARKER=1`; group routes
 send concise finals without that marker. Long text is split at Telegram's

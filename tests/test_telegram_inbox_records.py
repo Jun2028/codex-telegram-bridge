@@ -70,6 +70,23 @@ class TelegramInboxRecordIsolationTests(unittest.TestCase):
             ("Hi! 你好 👋", "final_answer"),
         )
 
+    def test_async_question_does_not_end_the_turn(self) -> None:
+        from teleagent.events import TurnDelivery
+        record = {"type": "event_msg", "payload": {"type": "item_completed", "item": {
+            "type": "AgentMessage", "phase": "final_answer", "delivery": "async",
+            "content": [{"type": "Text", "text": "Which repository?"}],
+            "questions": [{"title": "Which repository?"}],
+        }}}
+        text, phase = telegram_inbox.codex_agent_message(record)
+        self.assertEqual(phase, "question")
+        formatted, _ = telegram_inbox.format_forwarded_agent_message(text, phase, {}, 1000)
+        self.assertNotIn("∎", formatted)
+        turn = TurnDelivery("123")
+        turn.bind("u1", lambda _: {"chat_id": "123"})
+        turn.delivered(turn.message_key(text, phase), phase)
+        self.assertTrue(turn.locked)
+        self.assertEqual(turn.chat_id, "123")
+
     def test_codex_agent_message_ignores_non_assistant_response_items(self) -> None:
         record = {
             "type": "response_item",

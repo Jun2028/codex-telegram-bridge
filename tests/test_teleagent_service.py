@@ -249,6 +249,7 @@ class RelayServiceTests(unittest.TestCase):
                     {
                         "message_id": 2,
                         "created_ts": 1786632844,
+                        "failed_ts": __import__("time").time(),
                         "last_error": "receipt write permission denied",
                         "relay_text": "[TELEGRAM USER MESSAGE message_id=2 route_id=u1 from user] private",
                     }
@@ -303,6 +304,22 @@ class RelayServiceTests(unittest.TestCase):
             [item["message_id"] for item in queue.telegram_relay_queue_tasks(path)],
             [1, 3],
         )
+
+    def test_numbered_cancel_and_old_failures(self):
+        args = self.args()
+        path = Path(args.relay_queue_state_path)
+        for number in (1, 2):
+            queue.enqueue_telegram_relay(path, self.update(number), args.target_pane)
+        self.assertIn("1. hello", ui.queue_text(args, "123", False, None))
+        self.assertIn("More than one", ui.cancel_queued(args, "", "123", False, None))
+        self.assertIn("Removed 1", ui.cancel_queued(args, "2", "123", False, None))
+        self.assertEqual([t["message_id"] for t in queue.telegram_relay_queue_tasks(path)], [1])
+        self.assertIn("Removed 1", ui.cancel_queued(args, "", "123", False, None))
+        data = state.read_json_object(path)
+        data["failed"] = [{"failed_ts": 1, "error": "ancient failure"}]
+        state.write_json_object(path, data)
+        self.assertNotIn("ancient failure", ui.queue_text(args, "123", False, None))
+        self.assertEqual(len(state.read_json_object(path)["failed"]), 1)
 
     def test_group_owner_controls_and_unauthorized_callbacks(self):
         args = self.args()

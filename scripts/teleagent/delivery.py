@@ -234,7 +234,10 @@ def codex_agent_message(record: dict[str, Any]) -> tuple[str, str] | None:
             text = str(part.get("text") or "").strip()
             if text:
                 parts.append(text)
-    return "\n".join(parts), str(item.get("phase") or "")
+    # Async clarification prompts are labelled final_answer by Codex, but
+    # leave the turn running. Keep its route bound so replies can steer it.
+    phase = "question" if item.get("delivery") == "async" else str(item.get("phase") or "")
+    return "\n".join(parts), phase
 
 
 def codex_agent_message_id(record: dict[str, Any]) -> str:
@@ -410,7 +413,7 @@ def drain_codex_agent_messages(
             target_is_group = bool(turn.chat_id and turn.is_group)
             if not turn.chat_id and route_state_path is None:
                 target_is_group = bool(is_group_route)
-            if target_is_group and phase != "final_answer":
+            if target_is_group and phase not in ("final_answer", "question"):
                 offset = next_offset
                 continue
             max_chars = (

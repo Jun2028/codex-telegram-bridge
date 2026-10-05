@@ -63,6 +63,17 @@ def public_readme(text: str) -> str:
     return text[:start] + text[end:]
 
 
+def check_public_content(name: str, data: bytes) -> None:
+    if re.search(
+        rb"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b|\bsk-[A-Za-z0-9_-]{32,}\b|-----BEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY-----",
+        data,
+    ):
+        raise ValueError(f"Credential-like content requires review: {name}")
+    for match in re.finditer(rb"/(?:home|Users|scratch)/(?:svu/)?([A-Za-z0-9_.-]+)", data):
+        if match[1] not in {b"operator", b"user", b"test", b"example"}:
+            raise ValueError(f"Personal absolute path requires review: {name}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--destination", type=Path, required=True)
@@ -127,12 +138,8 @@ def main() -> int:
                 b"# Codex Telegram Bridge notification secrets.",
             )
             data = data.replace(b"TELEAGENT_REPORT_INTERVAL_SECONDS=1800\n", b"")
-        # Source only. Refuse obvious embedded credentials even in an allowed file.
-        if re.search(
-            rb"\b\d{8,12}:[A-Za-z0-9_-]{30,}\b|\bsk-[A-Za-z0-9]{32,}\b|-----BEGIN (?:RSA |OPENSSH )?PRIVATE KEY-----",
-            data,
-        ):
-            raise SystemExit(f"Credential-like content requires review: {name}")
+        # Source only; do not include credentials or personal host paths.
+        check_public_content(name, data)
         output = target / name
         if output.is_symlink() or any(
             parent.is_symlink() for parent in output.parents if parent != target

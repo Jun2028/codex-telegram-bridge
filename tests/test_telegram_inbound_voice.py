@@ -66,8 +66,8 @@ class TelegramInboundVoiceTests(unittest.TestCase):
         self.assertIn("unavailable on this host", str(ctx.exception))
 
     @unittest.skipUnless(
-        Path("/home/operator/whisper.cpp/build/bin/whisper-cli").is_file()
-        and Path("/home/operator/voice/usr/bin/opusdec").is_file()
+        (Path.home() / "whisper.cpp/build/bin/whisper-cli").is_file()
+        and (Path.home() / "voice/usr/bin/opusdec").is_file()
         and os.environ.get("TELEAGENT_VOICE_E2E") == "1",
         "live voice E2E requires installed whisper/opusdec and explicit opt-in",
     )
@@ -79,18 +79,18 @@ class TelegramInboundVoiceTests(unittest.TestCase):
                 ogg = Path(tmp) / "t.ogg"
                 import subprocess
                 env = dict(os.environ)
-                env["LD_LIBRARY_PATH"] = "/home/operator/voice/usr/lib/x86_64-linux-gnu"
+                env["LD_LIBRARY_PATH"] = str(Path.home() / "voice/usr/lib/x86_64-linux-gnu")
                 subprocess.run(
-                    ["/home/operator/voice/usr/bin/opusenc", "--quiet",
+                    [str(Path.home() / "voice/usr/bin/opusenc"), "--quiet",
                      "/tmp/hello.wav", str(ogg)],
                     env=env, check=True,
                 )
                 transcript = inbox.transcribe_voice_ogg(
                     ogg,
-                    Path("/home/operator/whisper.cpp/build/bin/whisper-cli"),
-                    Path("/home/operator/whisper.cpp/models/ggml-small.bin"),
-                    Path("/home/operator/voice/usr/bin/opusdec"),
-                    Path("/home/operator/voice/usr/lib/x86_64-linux-gnu"),
+                    (Path.home() / "whisper.cpp/build/bin/whisper-cli"),
+                    (Path.home() / "whisper.cpp/models/ggml-small.bin"),
+                    (Path.home() / "voice/usr/bin/opusdec"),
+                    (Path.home() / "voice/usr/lib/x86_64-linux-gnu"),
                 )
                 self.assertTrue(transcript.strip())
 
