@@ -94,6 +94,7 @@ tests/test_telegram_inbound_documents.py
 tests/test_telegram_inbound_photos.py
 tests/test_telegram_inbound_voice.py
 tests/test_telegram_inbox_records.py
+tests/test_telegram_model_menu.py
 tests/test_telegram_relay_queue.py
 tests/test_telegram_reply_routing.py
 tests/test_telegram_timed_messages.py

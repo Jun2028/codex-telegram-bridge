@@ -112,10 +112,13 @@ def current_codex_model_and_reasoning_effort(
         r"\b(gpt-[\w.-]+|deepseek-[\w.-]+)\s+"
         r"(low|medium|high|xhigh|max|ultra)(?:\s+[·/]|\s*$)",
         pane_text,
-        flags=re.MULTILINE,
+        flags=re.MULTILINE | re.IGNORECASE,
     )
     if matches:
-        return matches[-1]
+        # Newer CLIs render the display name ("GPT-6.1-Sol"), older ones the
+        # slug ("gpt-6.1-sol"); normalize back to the lowercase slug.
+        model, effort = matches[-1]
+        return model.lower(), effort
     if session_path is None:
         meta = agent_registry.active_agent_for_pane(target_pane)
         if meta:
@@ -229,7 +232,7 @@ def set_codex_model(
         match = re.search(
             rf"^\s*(?:›\s*)?(\d+)\.\s+{re.escape(selected_model)}(?:\s|$)",
             model_menu,
-            flags=re.MULTILINE,
+            flags=re.MULTILINE | re.IGNORECASE,
         )
         if not match:
             if selected_model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
@@ -246,9 +249,11 @@ def set_codex_model(
             _processes.tmux_send_keys(target_pane, "Down")
             _processes.wait_for_tmux_text(target_pane, f"› {selected_index + 1}.")
         _processes.tmux_send_keys(target_pane, "Enter")
+        # The reasoning header uses the display name ("GPT-6.1-Sol") on newer
+        # CLIs, so wait on the stable prefix; the model is verified below.
         _processes.wait_for_tmux_text(
             target_pane,
-            f"Select Reasoning Level for {selected_model}",
+            "Select Reasoning Level for",
         )
 
         select_codex_reasoning_effort(target_pane, selected_effort)
