@@ -36,9 +36,11 @@ check before resending. Cancel an unsent item with
 `/cancel` when only one item is waiting, `/cancel 1` for the numbered item in
 `/queue`, or `/cancel all`. Cancellation does not interrupt the running task.
 
-During an ordinary turn, input from the bound chat can steer that task. Inputs
-from another chat/topic wait in the single FIFO. Goal-mode work is not paused
-by the queue. Use the explicit `/interrupt PROMPT` control when you intend to
+Input from the bound chat can steer the task, including automatic Goal-mode
+continuations. The goal keeps its originating chat/topic across turns; other
+chats/topics wait in the single FIFO. Delivery uses normal input without
+interrupting or replacing the goal. `/resume_goal` reports whether the saved
+goal actually became active. Use the explicit `/interrupt PROMPT` control when you intend to
 abort and replace the current turn. `/kill_agent` persistently stops the agent
 while leaving the Telegram listener online.
 

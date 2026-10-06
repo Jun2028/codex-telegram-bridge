@@ -171,7 +171,7 @@ def block_telegram_relay_queue_task(
 
 
 def same_chat_can_steer(args, update: dict[str, Any]) -> bool:
-    """Only an already-bound chat may steer an ordinary active turn."""
+    """Only the bound chat may steer an active turn, including a goal continuation."""
     state_text = getattr(args, "agent_message_state_path", None)
     if not state_text:
         return False
@@ -190,7 +190,6 @@ def same_chat_can_steer(args, update: dict[str, Any]) -> bool:
         checkpoint
         and str(checkpoint[0].resolve()) == active.get("session_path")
         and _submission.codex_session_turn_active(checkpoint[0])
-        and not _processes.codex_goal_active(args.target_pane)
     )
 
 
@@ -534,7 +533,7 @@ def drain_telegram_relay_queue(
     checkpoint = _submission.codex_session_checkpoint(args.target_pane)
     if checkpoint is not None and _submission.codex_session_turn_active(checkpoint[0]):
         # Use the same non-interrupting steering policy as new input. Other
-        # chats and Goal-mode work still wait; never abort a turn to drain.
+        # chats still wait; never abort a turn to drain.
         if not same_chat_can_steer(args, update):
             return []
 

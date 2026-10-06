@@ -55,6 +55,27 @@ class FailureReportingTests(unittest.TestCase):
             },
         }
 
+    def test_resume_goal_reports_observed_state_not_just_sent_keys(self):
+        self.args.relay_mode = "tmux-enter"
+        self.args.submit_delay = 0
+        self.args.reply_controls = True
+        self.args.codex_usage_state_path = str(self.root / "usage.json")
+        self.args.codex_reset_state_path = str(self.root / "reset.json")
+        with (
+            mock.patch.object(processes, "relay_codex_control", return_value="relayed to fixture"),
+            mock.patch.object(commands._submission, "codex_session_checkpoint", return_value=(self.root / "session", 0)),
+            mock.patch.object(status, "codex_session_goal_status", return_value="active"),
+            mock.patch.object(replies, "send") as send,
+        ):
+            commands.handle_update(self.update("/resume_goal"), self.args, {}, "token", "123", self.root / "log", owner_user_id="123")
+            self.assertIn("Goal is active", send.call_args.args[3])
+            with (
+                mock.patch.object(status, "codex_session_goal_status", return_value="paused"),
+                mock.patch.object(commands.time, "monotonic", side_effect=[0, 4]),
+            ):
+                commands.handle_update(self.update("/resume_goal"), self.args, {}, "token", "123", self.root / "log", owner_user_id="123")
+            self.assertIn("not confirmed", send.call_args.args[3])
+
     def test_corrupt_state_is_preserved_instead_of_overwritten_as_empty(self):
         path = self.root / "inbox.json"
         for original in ('{"pending": [', "[]", ""):

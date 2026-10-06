@@ -307,6 +307,39 @@ def drain_codex_agent_messages(
         turn.route_id = str(state.get("active_route_id") or "")
         turn.chat_id = str(state.get("active_chat_id") or "")
         turn.is_group = bool(state.get("active_is_group"))
+        if "goal_active" not in state:
+            # Upgrade routing metadata only. Never rewind the delivery cursor
+            # or resend old output. Missing historical routes stay private.
+            recovered = TurnDelivery(chat_id)
+            with session_path.open("rb") as history:
+                while history.tell() < offset:
+                    line = history.readline()
+                    if not line:
+                        break
+                    try:
+                        old = json.loads(line)
+                    except (ValueError, UnicodeError):
+                        continue
+                    recovered.observe_goal(old)
+                    identity = turn_identity(old)
+                    if identity:
+                        recovered.begin(identity)
+                    route = _messages.telegram_route_id_from_codex_record(old)
+                    if route:
+                        recovered.bind(route, lambda key: (
+                            _routing.reply_route_details(route_state_path, key)
+                            if route_state_path is not None else None
+                        ))
+                    message = codex_agent_message(old)
+                    if message:
+                        recovered.delivered("", message[1])
+            turn.last_destination = recovered.last_destination
+            turn.goal_destination = recovered.goal_destination
+            turn.goal_active = recovered.goal_active
+            turn.goal_objective_digest = recovered.goal_objective_digest
+            if recovered.goal_active and recovered.locked and not turn.conflicted:
+                turn.chat_id, turn.is_group = recovered.chat_id, recovered.is_group
+                turn.topic_id, turn.locked = recovered.topic_id, True
     else:
         last_message_id = ""
         turn.route_id = ""
@@ -359,6 +392,7 @@ def drain_codex_agent_messages(
                 offset = next_offset
                 continue
 
+            turn.observe_goal(record)
             identity = turn_identity(record)
             if identity:
                 turn.begin(identity)

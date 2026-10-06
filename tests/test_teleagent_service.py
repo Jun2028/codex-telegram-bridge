@@ -219,7 +219,7 @@ class RelayServiceTests(unittest.TestCase):
             mock.patch.object(
                 submission, "codex_session_turn_active", return_value=True
             ),
-            mock.patch.object(processes, "codex_goal_active", return_value=False),
+            mock.patch.object(processes, "codex_goal_active", return_value=True),
         ):
             self.assertTrue(
                 queue.same_chat_can_steer(args, self.update(chat="-99", topic=7))
@@ -304,6 +304,34 @@ class RelayServiceTests(unittest.TestCase):
             [item["message_id"] for item in queue.telegram_relay_queue_tasks(path)],
             [1, 3],
         )
+
+    def test_goal_continuation_keeps_chat_and_quarantines_cross_chat_input(self):
+        turn = events.TurnDelivery("owner")
+        routes = {
+            "group": {"chat_id": "-99", "is_group": True, "message_thread_id": 7},
+            "private": {"chat_id": "owner"},
+        }
+        turn.begin("first")
+        turn.bind("group", routes.get)
+        turn.observe_goal({"type": "event_msg", "payload": {
+            "type": "thread_goal_updated", "goal": {"status": "active", "objective": "exact goal"},
+        }})
+        turn.delivered("answer", "final_answer")
+        turn = events.TurnDelivery.restore(turn.snapshot(), "owner")
+        turn.begin("automatic")
+        self.assertTrue(turn.locked)
+        self.assertEqual((turn.chat_id, turn.topic_id), ("-99", 7))
+        turn.bind("private", routes.get)
+        self.assertTrue(turn.conflicted)
+        turn.delivered("answer2", "final_answer")
+        turn.begin("next automatic")
+        self.assertEqual(turn.chat_id, "owner")
+        self.assertFalse(turn.is_group)
+        turn.observe_goal({"type": "event_msg", "payload": {
+            "type": "thread_goal_updated", "goal": {"status": "complete", "objective": "exact goal"},
+        }})
+        turn.begin("ordinary")
+        self.assertFalse(turn.locked)
 
     def test_numbered_cancel_and_old_failures(self):
         args = self.args()

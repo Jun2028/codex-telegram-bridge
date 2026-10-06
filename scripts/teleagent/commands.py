@@ -4,6 +4,7 @@ from __future__ import annotations
 
 
 import argparse
+import os
 import socket
 import time
 import uuid
@@ -914,7 +915,21 @@ def handle_update(
         record["target_pane"] = args.target_pane
         record["relay_result"] = reply
         if reply.startswith("relayed to "):
-            reply = "Sent /goal resume to Codex. Now send normal Telegram text with the next instruction."
+            checkpoint = _submission.codex_session_checkpoint(args.target_pane)
+            observed = "unknown"
+            deadline = time.monotonic() + 3
+            while checkpoint is not None:
+                observed = _status.codex_session_goal_status(
+                    checkpoint[0], sqlite_home=os.environ.get("CODEX_SQLITE_HOME")
+                )
+                if observed == "active" or time.monotonic() >= deadline:
+                    break
+                time.sleep(0.1)
+            reply = (
+                "Goal is active. Your messages in this chat can now reach the running agent."
+                if observed == "active" else
+                f"Resume requested, but goal status is {observed}. Resumption is not confirmed; /status shows the current state."
+            )
     elif command == "/codex":
         codex_text = payload.strip()
         if not codex_text:

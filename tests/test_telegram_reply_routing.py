@@ -158,6 +158,34 @@ class TelegramReplyRoutingTests(unittest.TestCase):
             self.assertEqual(send.call_count, 2)
             self.assertTrue(all(c.args[1] == "group-chat" for c in send.call_args_list))
 
+    def test_upgrade_recovers_goal_owner_without_replaying_messages(self):
+        telegram_inbox.set_reply_route_chat_id(self.routes, "owner-private", is_group=False, route_id="u1")
+        self.write_records(
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "one"}},
+            self.user("[TELEGRAM USER MESSAGE message_id=1 route_id=u1 from user] task"),
+            {"type": "event_msg", "payload": {"type": "thread_goal_updated", "goal": {
+                "status": "active", "objective": "keep this exact goal",
+            }}},
+            self.assistant("final1", "final_answer", "Working on the goal"),
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "two"}},
+        )
+        with mock.patch.object(_relay_transport, "send_reply") as send:
+            kwargs = dict(sessions_root=self.root, route_state_path=self.routes)
+            telegram_inbox.drain_codex_agent_messages("token", "owner-private", self.meta, self.messages, None, {}, **kwargs)
+            old = json.loads(self.messages.read_text())
+            offset = old["offset"]
+            for key in ("goal_active", "goal_destination", "goal_objective_digest", "last_destination"):
+                old.pop(key, None)
+            old.update(route_locked=False, active_chat_id="")
+            self.messages.write_text(json.dumps(old))
+            send.reset_mock()
+            telegram_inbox.drain_codex_agent_messages("token", "owner-private", self.meta, self.messages, None, {}, **kwargs)
+            send.assert_not_called()
+            saved = json.loads(self.messages.read_text())
+            self.assertEqual(saved["offset"], offset)
+            self.assertTrue(saved["route_locked"])
+            self.assertEqual(saved["active_chat_id"], "owner-private")
+
     def test_missing_route_fails_closed_to_owner_private_chat(self) -> None:
         self.write_records(
             self.user(

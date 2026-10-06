@@ -37,6 +37,10 @@ class TurnDelivery:
     locked: bool = False
     conflicted: bool = False
     recent: list[str] = field(default_factory=list)
+    last_destination: dict[str, Any] = field(default_factory=dict)
+    goal_destination: dict[str, Any] = field(default_factory=dict)
+    goal_active: bool = False
+    goal_objective_digest: str = ""
 
     @classmethod
     def restore(cls, state: dict[str, Any], owner_chat_id: str) -> TurnDelivery:
@@ -51,6 +55,10 @@ class TurnDelivery:
             locked=bool(state.get("route_locked", state.get("active_route_id"))),
             conflicted=bool(state.get("turn_conflicted")),
             recent=list(state.get("recent_message_keys") or [])[-128:],
+            last_destination=dict(state.get("last_destination") or {}),
+            goal_destination=dict(state.get("goal_destination") or {}),
+            goal_active=bool(state.get("goal_active")),
+            goal_objective_digest=str(state.get("goal_objective_digest") or ""),
         )
 
     def snapshot(self) -> dict[str, Any]:
@@ -64,7 +72,28 @@ class TurnDelivery:
             "route_locked": self.locked,
             "turn_conflicted": self.conflicted,
             "recent_message_keys": self.recent[-128:],
+            "last_destination": self.last_destination,
+            "goal_destination": self.goal_destination,
+            "goal_active": self.goal_active,
+            "goal_objective_digest": self.goal_objective_digest,
         }
+
+    def observe_goal(self, record: dict[str, Any]) -> None:
+        payload = record.get("payload") or {}
+        if record.get("type") != "event_msg" or payload.get("type") != "thread_goal_updated":
+            return
+        goal = payload.get("goal") or {}
+        self.goal_active = goal.get("status") == "active"
+        objective = goal.get("objective")
+        if isinstance(objective, str):
+            digest = hashlib.sha256(objective.encode()).hexdigest()
+            if digest != self.goal_objective_digest:
+                self.goal_objective_digest = digest
+                self.goal_destination = dict(self.last_destination)
+        if self.goal_active and not self.goal_destination:
+            self.goal_destination = dict(self.last_destination)
+        if goal.get("status") in ("complete", "cancelled") or not goal:
+            self.goal_destination = {}
 
     def begin(self, identity: str) -> None:
         if identity == self.turn_id:
@@ -78,6 +107,11 @@ class TurnDelivery:
         self.route_id = self.chat_id = ""
         self.is_group = self.locked = self.conflicted = False
         self.topic_id = self.source_message_id = None
+        if self.goal_active and self.goal_destination:
+            self.chat_id = self.goal_destination["chat_id"]
+            self.is_group = self.goal_destination.get("is_group", False)
+            self.topic_id = self.goal_destination.get("topic_id")
+            self.locked = True
 
     def bind(
         self, route_id: str, lookup: Callable[[str], dict[str, Any] | None]
@@ -93,6 +127,8 @@ class TurnDelivery:
                 self.chat_id = self.owner_chat_id
                 self.is_group = False
                 self.topic_id = self.source_message_id = None
+                if self.goal_active:
+                    self.goal_destination = {"chat_id": self.owner_chat_id, "is_group": False}
             return
         if not self.turn_id or self.turn_id.startswith("route:"):
             self.turn_id = "route:" + route_id
@@ -102,6 +138,9 @@ class TurnDelivery:
         self.source_message_id = (route or {}).get("source_message_id")
         self.is_group = bool((route or {}).get("is_group"))
         self.locked = True
+        self.last_destination = {
+            "chat_id": self.chat_id, "is_group": self.is_group, "topic_id": self.topic_id,
+        }
 
     def message_key(self, text: str, phase: str) -> str:
         # IDs are absent in some Codex event schemas. Content is deduplicated
