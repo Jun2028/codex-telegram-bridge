@@ -34,7 +34,16 @@ agent_healthy() {
       | awk '/codex_agent_supervisor[.]sh/{print $1; exit}'
   )
   [ -n "$supervisor_pid" ] || return 1
-  ps -o comm= --ppid "$supervisor_pid" 2>/dev/null | grep -Fx codex >/dev/null
+  case "$(ps -o comm= --ppid "$supervisor_pid" 2>/dev/null || true)" in
+    codex|codex-agy)
+      return 0
+      ;;
+  esac
+  # The agy harness runner renames its process comm shortly after Python
+  # starts; accept the command line during that brief startup window so a
+  # watchdog tick cannot replace a healthy agy agent with the default model.
+  ps -o args= --ppid "$supervisor_pid" 2>/dev/null \
+    | grep -Fq 'agy_agent_runner.py'
 }
 
 inbox_healthy() {
