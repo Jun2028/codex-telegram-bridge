@@ -794,7 +794,7 @@ def handle_update(
             reply = (
                 _transport.short_error(exc, env)
                 if isinstance(exc, _lifecycle.AgentStartUnconfirmed)
-                else f"Failed to {verb} Codex agent: {_transport.short_error(exc, env)}"
+                else f"Failed to {verb} agent: {_transport.short_error(exc, env)}"
             )
             record["action"] = command.lstrip("/") + "_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
