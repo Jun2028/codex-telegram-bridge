@@ -22,6 +22,10 @@ CODEX_REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-high}"
 if [[ "$CODEX_MODEL" == "gpt-6-astra" && -z "${TELEAGENT_CODEX_REASONING_EFFORT:-}" ]]; then
   CODEX_REASONING_EFFORT="medium"
 fi
+if tele_agent_is_agy_model "$CODEX_MODEL"; then
+  # agy picks its own default thinking level unless one is configured.
+  CODEX_REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-}"
+fi
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -48,7 +52,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if ! command -v codex >/dev/null 2>&1; then
+if tele_agent_is_agy_model "$CODEX_MODEL"; then
+  if ! command -v "${TELEAGENT_AGY_BIN:-agy}" >/dev/null 2>&1; then
+    echo "agy CLI not found on PATH (set TELEAGENT_AGY_BIN to override)" >&2
+    exit 1
+  fi
+  if ! resolved_model="$(
+    PYTHONPATH="$SCRIPT_DIR" python3 -m teleagent.agy resolve "$CODEX_MODEL" 2>&1
+  )"; then
+    echo "$resolved_model" >&2
+    exit 2
+  fi
+  CODEX_MODEL="$resolved_model"
+  # New launches start a fresh agy conversation; supervisor crash recovery
+  # keeps the recorded conversation instead.
+  rm -f "$TELEAGENT_LOG_DIR/agy_conversation.json" 2>/dev/null || true
+elif ! command -v codex >/dev/null 2>&1; then
   echo "codex CLI not found on PATH" >&2
   exit 1
 fi
@@ -169,7 +188,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
         | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
         || true
     )"
-    if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Fx 'codex' >/dev/null; then
+    if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy' >/dev/null; then
       AGENT_LAUNCH_HEALTHY=1
       break
     fi
@@ -238,7 +257,7 @@ SUPERVISOR_PID="$(
     | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
     || true
 )"
-if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Fx 'codex' >/dev/null; }; then
+if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy' >/dev/null; }; then
   echo "session=$SESSION window=$WINDOW pane=0 cmd=codex supervised=yes model=$CODEX_MODEL reasoning=$CODEX_REASONING_EFFORT"
 else
   echo "session=$SESSION window=$WINDOW pane=0 cmd=unhealthy supervised=no" >&2

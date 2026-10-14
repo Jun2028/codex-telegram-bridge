@@ -54,10 +54,23 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+USE_AGY=0
+if tele_agent_is_agy_model "$MODEL"; then
+  USE_AGY=1
+fi
+AGENT_LABEL="codex"
+if [[ "$USE_AGY" -eq 1 ]]; then
+  AGENT_LABEL="agy"
+fi
+
 if [[ -z "$REASONING_EFFORT" ]]; then
   REASONING_EFFORT="high"
   if [[ "$MODEL" == "gpt-6-astra" ]]; then
     REASONING_EFFORT="medium"
+  fi
+  if [[ "$USE_AGY" -eq 1 ]]; then
+    # Let agy choose its default thinking level.
+    REASONING_EFFORT=""
   fi
 fi
 
@@ -69,7 +82,12 @@ case "$CHECK_FOR_UPDATE_ON_STARTUP" in
     ;;
 esac
 
-if ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
+if [[ "$USE_AGY" -eq 1 ]]; then
+  if ! command -v "${TELEAGENT_AGY_BIN:-agy}" >/dev/null 2>&1; then
+    echo "agy CLI not found (set TELEAGENT_AGY_BIN to override)" >&2
+    exit 1
+  fi
+elif ! command -v "$CODEX_BIN" >/dev/null 2>&1; then
   echo "codex CLI not found: $CODEX_BIN" >&2
   exit 1
 fi
@@ -108,10 +126,34 @@ PY
     fi
   fi
   started_at="$(date +%s)"
-  printf '[%s] starting codex model=%s reasoning=%s access=%s restart_count=%s\n' \
-    "$(date -Iseconds)" "$MODEL" "$REASONING_EFFORT" "$ACCESS_MODE" \
+  printf '[%s] starting %s model=%s reasoning=%s access=%s restart_count=%s\n' \
+    "$(date -Iseconds)" "$AGENT_LABEL" "$MODEL" "$REASONING_EFFORT" "$ACCESS_MODE" \
     "$restart_count" >> "$LOG_PATH"
 
+  if [[ "$USE_AGY" -eq 1 ]]; then
+    # Antigravity (agy) harness: the pane runs the agy runner, not the Codex
+    # TUI.  The runner keeps the agy conversation and writes the session
+    # records the listener forwards to Telegram.
+    export CODEX_HOME="$TELEAGENT_CODEX_HOME"
+    agy_runner_args=(
+      --model "$MODEL"
+      --repo "$TELEAGENT_REPO"
+      --state-dir "$TELEAGENT_LOG_DIR"
+      --codex-home "$CODEX_HOME"
+    )
+    if [[ -n "$REASONING_EFFORT" ]]; then
+      agy_runner_args+=(--effort "$REASONING_EFFORT")
+    fi
+    if [[ -n "${TELEAGENT_AGY_BIN:-}" ]]; then
+      agy_runner_args+=(--agy-bin "$TELEAGENT_AGY_BIN")
+    fi
+    set +e
+    PYTHONPATH="$SCRIPT_DIR" python3 "$SCRIPT_DIR/agy_agent_runner.py" \
+      "${agy_runner_args[@]}"
+    rc=$?
+    set -e
+  else
+  # ---- Codex / DeepSeek harness ----
   use_ds=0
   if tele_agent_is_deepseek_model "$MODEL"; then
     use_ds=1
@@ -187,6 +229,7 @@ PY
   "$CODEX_BIN" "${codex_args[@]}"
   rc=$?
   set -e
+  fi
 
   [[ "$stop_requested" -eq 0 ]] || break
 
@@ -202,12 +245,12 @@ PY
   delay=$((BASE_DELAY * (1 << backoff_exponent)))
   (( delay > MAX_DELAY )) && delay=$MAX_DELAY
 
-  printf '[%s] codex exited rc=%s runtime=%ss; restarting in %ss\n' \
-    "$(date -Iseconds)" "$rc" "$runtime" "$delay" >> "$LOG_PATH"
+  printf '[%s] %s exited rc=%s runtime=%ss; restarting in %ss\n' \
+    "$(date -Iseconds)" "$AGENT_LABEL" "$rc" "$runtime" "$delay" >> "$LOG_PATH"
 
   if (( failure_count == 1 || failure_count % 5 == 0 )); then
     "$SCRIPT_DIR/telegram_agent_reply.sh" progress \
-      "Codex agent exited unexpectedly (rc=$rc); restarting automatically in ${delay}s." \
+      "$AGENT_LABEL agent exited unexpectedly (rc=$rc); restarting automatically in ${delay}s." \
       >/dev/null 2>&1 || true
   fi
 
@@ -221,4 +264,4 @@ PY
   child_pid=""
 done
 
-printf '[%s] codex supervisor stopped\n' "$(date -Iseconds)" >> "$LOG_PATH"
+printf '[%s] %s supervisor stopped\n' "$(date -Iseconds)" "$AGENT_LABEL" >> "$LOG_PATH"

@@ -20,6 +20,7 @@ docs/telegram_codex_agent.md
 docs/tmux_safety.md
 docs/writer.md
 scripts/app_image_gen.py
+scripts/agy_agent_runner.py
 scripts/bootstrap_new_machine.sh
 scripts/check.sh
 scripts/check_deepseek_provider.py
@@ -42,6 +43,7 @@ scripts/start_codex_agent.sh
 scripts/start_telegram_inbox.sh
 scripts/start_tmux.sh
 scripts/teleagent/__init__.py
+scripts/teleagent/agy.py
 scripts/teleagent/app.py
 scripts/teleagent/attachments.py
 scripts/teleagent/auth.py
@@ -73,6 +75,8 @@ scripts/telegram_inbox.py
 scripts/telegram_inbox_supervisor.sh
 scripts/telegram_inbox_watchdog.sh
 scripts/tmux_isolated_test.sh
+tests/test_agy_runner.py
+tests/test_agy_runtime.py
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
 tests/test_codex_reset_api.py

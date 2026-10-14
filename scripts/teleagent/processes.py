@@ -81,6 +81,23 @@ def tmux_pane_has_codex_process(target_pane: str) -> bool:
     return registered_codex_process_running(target_pane)
 
 
+def tmux_pane_has_agy_process(target_pane: str) -> bool:
+    """Return whether the pane runs the Antigravity (agy) harness runner."""
+    root_pid = agent_registry.tmux_pane_pid(target_pane)
+    if root_pid is None:
+        return False
+    for pid in agent_registry.descendants(root_pid):
+        try:
+            command_name = (
+                Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+            )
+        except OSError:
+            continue
+        if command_name == "codex-agy":
+            return True
+    return False
+
+
 def codex_process_identity(target_pane: str) -> str | None:
     """Return a PID-reuse-safe identity for the Codex process in a tmux pane."""
     try:

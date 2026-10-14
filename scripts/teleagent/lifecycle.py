@@ -16,6 +16,7 @@ import telegram_agent_registry as agent_registry  # noqa: E402
 from . import settings as _settings
 from . import processes as _processes
 from . import state as _state
+from . import agy as _agy
 
 
 def agent_lifecycle_state_path(args: argparse.Namespace) -> Path | None:
@@ -117,6 +118,15 @@ def start_codex_agent(
 ) -> tuple[str, str, dict[str, Any] | None]:
     _processes.ensure_tmux_session(repo_root, session)
     target_pane = f"{session}:{window}.0"
+    if _settings.is_agy_model(model):
+        # Resolve agy aliases (g-flash, argon, ...) before the pane starts so
+        # an unavailable model fails with a clear message instead of a
+        # restart loop, and start a fresh agy conversation (the supervisor's
+        # own crash restarts keep the recorded conversation).
+        model = _agy.resolve_model(model)
+        log_dir = os.environ.get("TELEAGENT_LOG_DIR")
+        if log_dir:
+            (Path(log_dir) / "agy_conversation.json").unlink(missing_ok=True)
     agent_codex_home = _processes.codex_home_for_model(model)
     shell_command = _processes.tmux_bash_shell_command()
 

@@ -355,5 +355,14 @@ def parse_agent_launch_payload(payload: str) -> tuple[str, str, bool]:
         and not reasoning_explicit
     ):
         reasoning_effort = "max"
+    if _settings.is_agy_model(model):
+        if reasoning_explicit:
+            if reasoning_effort not in _settings.AGY_CODEX_REASONING_EFFORTS:
+                raise ValueError(
+                    "agy reasoning must be low, medium, high, xhigh, or max"
+                )
+        else:
+            # Empty means the agy model's own default thinking level.
+            reasoning_effort = ""
     _models.validate_model_reasoning_effort(model, reasoning_effort)
     return model, reasoning_effort, True

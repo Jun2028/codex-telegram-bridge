@@ -157,6 +157,17 @@ tele_agent_is_deepseek_model() {
   return 1
 }
 
+# Antigravity CLI (agy) harness.  Short aliases resolve against the signed-in
+# account's live model table.  Keep in sync with scripts/teleagent/settings.py.
+tele_agent_is_agy_model() {
+  case "${1:-}" in
+    g-flash|argon|sonnet|opus|oss|gemini-*|claude-*|gpt-oss-*)
+      return 0
+      ;;
+  esac
+  return 1
+}
+
 # A tmux server keeps the environment of the process that created it.  If a
 # cron job starts the shared server first, tmux can therefore inherit
 # SHELL=/bin/sh even though this project requires Bash.  Always give managed

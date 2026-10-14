@@ -38,21 +38,23 @@ def normalize_codex_agent_model(value: str, *, live: bool = False) -> str:
         else _settings.SUPPORTED_CODEX_AGENT_MODELS
     )
     model = aliases.get(normalized, normalized)
-    if model not in supported:
+    if model not in supported and not _settings.is_agy_model(model):
         if live:
             raise ValueError(
                 "unknown model; use sol/latest (gpt-6.1-sol, the default), "
                 "astra (gpt-6-astra), gpt-5.6-sol, luna (gpt-5.6-luna), "
                 "spark (gpt-5.3-codex-spark), or "
                 "ds-flash (deepseek-flash) / "
-                "ds-pro (deepseek-v4-pro)"
+                "ds-pro (deepseek-v4-pro) / "
+                "agy aliases g-flash, argon, sonnet, opus, oss"
             )
         raise ValueError(
             "unknown model; use sol/latest (gpt-6.1-sol, the default), "
             "astra (gpt-6-astra), gpt-5.6-sol, luna (gpt-5.6-luna), "
             "spark (gpt-5.3-codex-spark), or "
             "ds-flash (deepseek-flash) / "
-            "ds-pro (deepseek-v4-pro)"
+            "ds-pro (deepseek-v4-pro) / "
+            "agy aliases g-flash, argon, sonnet, opus, oss"
         )
     return model
 
@@ -77,6 +79,14 @@ def validate_model_reasoning_effort(model: str, effort: str) -> None:
         and effort != "max"
     ):
         raise ValueError("DeepSeek reasoning must be max")
+    if (
+        _settings.is_agy_model(model)
+        and effort
+        and effort not in _settings.AGY_CODEX_REASONING_EFFORTS
+    ):
+        raise ValueError(
+            "agy reasoning must be low, medium, high, xhigh, or max"
+        )
 
 
 def parse_live_model_payload(payload: str) -> tuple[str, str | None]:
@@ -86,8 +96,8 @@ def parse_live_model_payload(payload: str) -> tuple[str, str | None]:
         raise ValueError(f"invalid quoting: {exc}") from exc
     if not 1 <= len(tokens) <= 2:
         raise ValueError(
-            "usage: /model latest|astra|sol|luna|spark|ds-flash|ds-pro "
-            "[low|medium|high|xhigh|max|ultra]"
+            "usage: /model latest|astra|sol|luna|spark|ds-flash|ds-pro|"
+            "g-flash|argon|sonnet|opus|oss [low|medium|high|xhigh|max|ultra]"
         )
     model = normalize_codex_agent_model(tokens[0], live=True)
     reasoning_effort = (
@@ -220,6 +230,16 @@ def set_codex_model(
         raise RuntimeError(f"tmux target not found: {target_pane}")
     if not _processes.tmux_pane_has_codex_process(target_pane):
         raise RuntimeError(f"target {target_pane} is not running Codex")
+    if _processes.tmux_pane_has_agy_process(target_pane):
+        raise RuntimeError(
+            "this chat runs the agy (Antigravity) harness; "
+            "use /restart_agent NAME to start a fresh agy chat"
+        )
+    if _settings.is_agy_model(selected_model):
+        raise RuntimeError(
+            "the agy (Antigravity) harness needs its own agent; "
+            f"use /restart_agent {selected_model} to switch with a fresh chat"
+        )
 
     try:
         _processes.tmux_send_keys(target_pane, "C-u")
@@ -281,6 +301,11 @@ def set_codex_reasoning_effort(target_pane: str, effort: str) -> str:
         raise RuntimeError(f"tmux target not found: {target_pane}")
     if not _processes.tmux_pane_has_codex_process(target_pane):
         raise RuntimeError(f"target {target_pane} is not running Codex")
+    if _processes.tmux_pane_has_agy_process(target_pane):
+        raise RuntimeError(
+            "this chat runs the agy (Antigravity) harness; "
+            "use /restart_agent NAME LEVEL to change model or reasoning"
+        )
     current = current_codex_model_and_reasoning_effort(target_pane)
     if current:
         validate_model_reasoning_effort(current[0], selected_effort)

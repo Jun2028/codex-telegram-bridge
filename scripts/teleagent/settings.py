@@ -15,7 +15,9 @@ SCRIPT_DIR = Path(__file__).resolve().parents[1]
 SHELL_COMMANDS = {"bash", "sh", "zsh", "fish", "csh", "tcsh", "dash", "ksh"}
 
 
-CODEX_COMMANDS = {"codex"}
+# Process comm names that the relay treats as an agent runtime in a pane.
+# `codex-agy` is the Antigravity CLI harness runner (see scripts/agy_agent_runner.py).
+CODEX_COMMANDS = {"codex", "codex-agy"}
 
 
 DEFAULT_SCRATCH = os.environ.get(
@@ -165,6 +167,30 @@ DEEPSEEK_CODEX_AGENT_MODELS = frozenset(
         DEEPSEEK_PRO_CODEX_AGENT_MODEL,
     }
 )
+
+
+# Antigravity CLI (agy) harness.  Short aliases resolve against the signed-in
+# account's live model table, so they keep tracking new releases; concrete
+# model ids (gemini-*, claude-*, gpt-oss-*) are accepted as well.
+AGY_CODEX_AGENT_MODEL_ALIASES = frozenset(
+    {"g-flash", "argon", "sonnet", "opus", "oss"}
+)
+
+
+AGY_CODEX_AGENT_MODEL_PREFIXES = ("gemini-", "claude-", "gpt-oss-")
+
+
+AGY_CODEX_REASONING_EFFORTS = frozenset(
+    {"low", "medium", "high", "xhigh", "max"}
+)
+
+
+def is_agy_model(model: str) -> bool:
+    """Return whether a model name belongs to the Antigravity (agy) harness."""
+    normalized = model.strip().lower()
+    return normalized in AGY_CODEX_AGENT_MODEL_ALIASES or normalized.startswith(
+        AGY_CODEX_AGENT_MODEL_PREFIXES
+    )
 
 
 SUPPORTED_CODEX_AGENT_MODELS = {

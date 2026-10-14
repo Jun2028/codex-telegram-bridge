@@ -64,6 +64,16 @@ select it. `astra` selects GPT-6 Astra; the other aliases are `luna`, `spark`,
 The last actual `turn_context` is the authority for the model shown in status.
 Before the first turn, status may fall back to the configured/live selector.
 
+The Antigravity CLI (`agy`) is a third harness next to Codex and DeepSeek.
+Start it with `/restart_agent g-flash` (or `argon`, `sonnet`, `opus`, `oss`),
+optionally with a level from `low` to `max`.  Aliases resolve against the
+signed-in account's live `agy models` table, so `g-flash` tracks the newest
+Gemini Flash and `argon` the newest Argon model.  agy chats change models only
+through `/restart_agent`, which starts a fresh agy conversation.  The harness
+needs the `agy` CLI on PATH (`TELEAGENT_AGY_BIN` overrides the binary) with a
+completed `agy` sign-in; Argon additionally requires a Google AI Ultra or
+eligible Gemini Enterprise account.
+
 Managed launches disable Codex's low-quota model-switch reminder with
 `notice.hide_rate_limit_model_nudge=true`. Automated relay input and Enter
 retries refuse the "Approaching rate limits" model selector. Low quota must

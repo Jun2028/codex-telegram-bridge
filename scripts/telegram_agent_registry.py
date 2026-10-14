@@ -105,6 +105,9 @@ def read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+CODEX_PROCESS_COMMANDS = frozenset({"codex", "codex-agy"})
+
+
 def codex_session_metadata(session_path: Path) -> dict[str, Any]:
     try:
         with session_path.open("r", encoding="utf-8") as handle:
@@ -405,7 +408,7 @@ def closest_codex_pids(
     candidates = [
         (pid, depth)
         for pid, depth in descendants_with_depth(root_pid, rows)
-        if comm_by_pid.get(pid) == "codex"
+        if comm_by_pid.get(pid) in CODEX_PROCESS_COMMANDS
     ]
     if not candidates:
         return []
