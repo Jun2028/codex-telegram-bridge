@@ -120,7 +120,7 @@ def current_codex_model_and_reasoning_effort(
     pane_text = _processes.tmux_tail(target_pane, lines=30)
     matches = re.findall(
         r"\b(gpt-[\w.-]+|deepseek-[\w.-]+)\s+"
-        r"(low|medium|high|xhigh|max|ultra)(?:\s+[·/]|\s*$)",
+        r"(low|medium|high|xhigh|max|ultra|default)(?:\s+fast)?(?:\s+[·/]|\s*$)",
         pane_text,
         flags=re.MULTILINE | re.IGNORECASE,
     )
@@ -211,6 +211,34 @@ def restore_codex_composer(target_pane: str) -> None:
         pass
 
 
+def open_codex_model_selector(target_pane: str) -> str:
+    """Retry a rejected /model once after Codex finishes its startup."""
+    for attempt in range(2):
+        _processes.tmux_send_keys(target_pane, "C-u")
+        _processes.tmux_send_keys(target_pane, "/model", literal=True)
+        time.sleep(1.0)
+        _processes.tmux_send_keys(target_pane, "Enter")
+        try:
+            return _processes.wait_for_tmux_text(target_pane, "Select Model and Effort")
+        except RuntimeError:
+            pane = _processes.tmux_tail(target_pane, lines=80)
+            startup_pending = any(text in pane for text in (
+                "Model selection is disabled until startup completes",
+                "Waiting for startup",
+            ))
+            if attempt or not startup_pending:
+                raise
+            deadline = time.monotonic() + 30.0
+            while time.monotonic() < deadline:
+                current = current_codex_model_and_reasoning_effort(target_pane)
+                if current and current[1] != "default" and _processes.codex_tui_idle(target_pane):
+                    break
+                time.sleep(0.2)
+            else:
+                raise RuntimeError("Codex startup did not finish within 30 seconds")
+    raise RuntimeError("Codex model selector did not open")
+
+
 def set_codex_model(
     target_pane: str,
     model: str,
@@ -242,13 +270,7 @@ def set_codex_model(
         )
 
     try:
-        _processes.tmux_send_keys(target_pane, "C-u")
-        _processes.tmux_send_keys(target_pane, "/model", literal=True)
-        time.sleep(1.0)
-        _processes.tmux_send_keys(target_pane, "Enter")
-        model_menu = _processes.wait_for_tmux_text(
-            target_pane, "Select Model and Effort"
-        )
+        model_menu = open_codex_model_selector(target_pane)
         match = re.search(
             rf"^\s*(?:›\s*)?(\d+)\.\s+{re.escape(selected_model)}(?:\s|$)",
             model_menu,
@@ -311,13 +333,7 @@ def set_codex_reasoning_effort(target_pane: str, effort: str) -> str:
         validate_model_reasoning_effort(current[0], selected_effort)
 
     try:
-        _processes.tmux_send_keys(target_pane, "C-u")
-        _processes.tmux_send_keys(target_pane, "/model", literal=True)
-        # Codex TUI treats an immediate Enter after pasted text as an edit
-        # event; a short delay makes it submit the slash command reliably.
-        time.sleep(1.0)
-        _processes.tmux_send_keys(target_pane, "Enter")
-        _processes.wait_for_tmux_text(target_pane, "Select Model and Effort")
+        open_codex_model_selector(target_pane)
 
         # /model opens with the active model selected. Confirm it unchanged,
         # then choose only the reasoning level for the current chat.

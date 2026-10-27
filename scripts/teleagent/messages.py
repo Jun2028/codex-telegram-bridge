@@ -118,19 +118,29 @@ def telegram_route_id_from_codex_record(record: dict[str, Any]) -> str | None:
     return telegram_route_id_from_text(text)
 
 
+def quoted_reply_text(message: dict[str, Any]) -> str:
+    quote = message.get("quote")
+    text = quote.get("text") if isinstance(quote, dict) else None
+    return text if isinstance(text, str) and text.strip() else ""
+
+
 def format_reply_context(message: dict[str, Any]) -> str:
+    quote = quoted_reply_text(message)
     replied = message.get("reply_to_message")
     if not isinstance(replied, dict):
-        return ""
-    replied_text = visible_message_text(replied)
+        if not quote:
+            return ""
+        replied = {}
+    replied_text = quote or visible_message_text(replied)
     if not replied_text:
         replied_text = "[non-text Telegram message]"
     replied_id = replied.get("message_id")
     message_ref = f" message_id={replied_id}" if replied_id is not None else ""
+    label = "QUOTED PART OF TELEGRAM MESSAGE" if quote else "REPLIED-TO TELEGRAM MESSAGE"
     return (
-        f"\n\n[REPLIED-TO TELEGRAM MESSAGE{message_ref} from {sender_label(replied)} "
+        f"\n\n[{label}{message_ref} from {sender_label(replied)} "
         f"at {telegram_message_time(replied)}]\n{replied_text}\n"
-        "[/REPLIED-TO TELEGRAM MESSAGE]"
+        f"[/{label}]"
     )
 
 

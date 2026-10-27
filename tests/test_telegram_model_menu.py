@@ -144,6 +144,42 @@ class TelegramModelMenuTests(unittest.TestCase):
 
         self.assertEqual(current, ("gpt-6-astra", "max"))
 
+    def test_status_line_reads_fast_and_startup_default(self) -> None:
+        for effort in ("medium", "default"):
+            with self.subTest(effort=effort), mock.patch.object(
+                _relay_processes, "tmux_tail",
+                return_value=f"  GPT-6.1-Sol {effort} fast · ~/tele-agent\n",
+            ):
+                self.assertEqual(
+                    _relay_models.current_codex_model_and_reasoning_effort("fixture:0.0"),
+                    ("gpt-6.1-sol", effort),
+                )
+
+    def test_selector_retries_only_startup_rejection(self) -> None:
+        for startup in ("Model selection is disabled until startup completes.",
+                        "Waiting for startup", ""):
+            with (
+                self.subTest(startup=startup),
+                mock.patch.object(_relay_models.time, "sleep"),
+                mock.patch.object(_relay_processes, "tmux_send_keys") as send,
+                mock.patch.object(_relay_processes, "wait_for_tmux_text",
+                    side_effect=[RuntimeError("selector absent"), DISPLAY_NAME_MENU]) as wait,
+                mock.patch.object(_relay_processes, "tmux_tail", return_value=startup or "Unrelated error"),
+                mock.patch.object(_relay_models, "current_codex_model_and_reasoning_effort",
+                    return_value=("gpt-6.1-sol", "medium")),
+                mock.patch.object(_relay_processes, "codex_tui_idle", return_value=True),
+            ):
+                if startup:
+                    self.assertEqual(_relay_models.open_codex_model_selector("fixture:0.0"),
+                                     DISPLAY_NAME_MENU)
+                    self.assertEqual(wait.call_count, 2)
+                    self.assertEqual(send.call_args_list.count(
+                        mock.call("fixture:0.0", "/model", literal=True)), 2)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, "selector absent"):
+                        _relay_models.open_codex_model_selector("fixture:0.0")
+                    self.assertEqual(wait.call_count, 1)
+
     def test_status_line_reads_deepseek_display_name(self) -> None:
         with mock.patch.object(
             _relay_processes,

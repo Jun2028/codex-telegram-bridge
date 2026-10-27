@@ -124,6 +124,16 @@ class TelegramTimedMessageTests(unittest.TestCase):
         self.assertEqual(duplicate["due_ts"], 2800.0)
         self.assertEqual(len(telegram_inbox.read_json_object(self.state)["tasks"]), 1)
 
+    def test_schedule_preserves_selected_quote_after_reload(self) -> None:
+        self.message["quote"] = {"text": "Only this sentence.", "position": 9, "is_manual": True}
+        task = self._schedule()
+        saved = self._state_task()["message"]
+        self.assertEqual(saved["quote"]["text"], "Only this sentence.")
+        formatted = telegram_inbox.format_agent_message(saved, task["message"]["text"])
+        self.assertIn("[QUOTED PART OF TELEGRAM MESSAGE message_id=4196", formatted)
+        self.assertIn("Only this sentence.", formatted)
+        self.assertNotIn("Previous context remains available.", formatted)
+
     def test_handle_update_schedules_decimal_hours_and_replies_with_due_time(self) -> None:
         args = self._handle_args()
         update = {"update_id": 88, "message": self.message}

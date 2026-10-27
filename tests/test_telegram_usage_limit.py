@@ -314,6 +314,59 @@ class TelegramUsageLimitTests(unittest.TestCase):
 
         self.assertIn("Complete media caption", formatted)
 
+    def test_selected_quote_replaces_full_reply_context(self) -> None:
+        quote = "Selected sentence: 数学 🧪.\n  Keep its spacing."
+        message = {
+            "message_id": 26,
+            "chat": {"id": "123", "type": "private"},
+            "text": "huh",
+            "quote": {"text": quote, "position": 99, "is_manual": True},
+            "reply_to_message": {
+                "message_id": 25,
+                "from": {"id": 789},
+                "text": "Unselected beginning. " + quote + " Unselected ending.",
+            },
+        }
+        formatted = telegram_inbox.format_agent_message(message, message["text"])
+        self.assertIn("[QUOTED PART OF TELEGRAM MESSAGE message_id=25", formatted)
+        self.assertIn(quote, formatted)
+        self.assertNotIn("Unselected beginning", formatted)
+        self.assertNotIn("Unselected ending", formatted)
+        self.assertIn("[/QUOTED PART OF TELEGRAM MESSAGE]", formatted)
+
+    def test_selected_quote_without_local_reply_is_preserved(self) -> None:
+        message = {"text": "this", "quote": {"text": "External quoted sentence"}}
+        formatted = telegram_inbox.format_agent_message(message, message["text"])
+        self.assertIn("External quoted sentence", formatted)
+        self.assertIn("[QUOTED PART OF TELEGRAM MESSAGE", formatted)
+
+    def test_invalid_quote_falls_back_to_full_reply(self) -> None:
+        for quote in (None, {}, {"text": " "}, {"text": 123}):
+            with self.subTest(quote=quote):
+                message = {"quote": quote, "reply_to_message": {"text": "Original text"}}
+                formatted = telegram_inbox.format_agent_message(message, "this")
+                self.assertIn("Original text", formatted)
+                self.assertIn("[REPLIED-TO TELEGRAM MESSAGE", formatted)
+
+    def test_inbound_log_preserves_selected_quote_as_reply_context(self) -> None:
+        args = argparse.Namespace(
+            max_log_chars=4000, target_pane="test:codex.0",
+            codex_usage_state_path=str(self.state),
+            codex_reset_state_path=str(self.root / "reset.state.json"),
+        )
+        update = {"update_id": 29, "message": {
+            "message_id": 28, "date": 1_900_000_000,
+            "chat": {"id": "123"}, "from": {"id": 456}, "text": "/help",
+            "quote": {"text": "Selected sentence."},
+            "reply_to_message": {"message_id": 27, "text": "Unselected context."},
+        }}
+        log = self.root / "quote.jsonl"
+        with mock.patch.object(_relay_transport, "send_reply"):
+            telegram_inbox.handle_update(update, args, {}, "token", "123", log)
+        record = json.loads(log.read_text())
+        self.assertTrue(record["reply_to_is_quote"])
+        self.assertEqual(record["reply_to_text_full"], "Selected sentence.")
+
     def test_parse_agent_launch_payload_accepts_optional_reasoning_only(self) -> None:
         model, reasoning, explicit = telegram_inbox.parse_agent_launch_payload("max")
 

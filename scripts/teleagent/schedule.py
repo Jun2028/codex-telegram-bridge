@@ -61,6 +61,9 @@ def timed_message_snapshot(
             "text": replied.get("text"),
             "caption": replied.get("caption"),
         }
+    quote = _messages.quoted_reply_text(message)
+    if quote:
+        snapshot["quote"] = {"text": quote}
     return snapshot
 
 

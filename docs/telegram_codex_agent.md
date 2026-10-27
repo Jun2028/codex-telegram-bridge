@@ -61,6 +61,9 @@ The managed default model is `gpt-6.1-sol` (GPT-6.1 Sol); `sol` and `latest`
 select it. `astra` selects GPT-6 Astra; the other aliases are `luna`, `spark`,
 `ds-flash` and `ds-pro`. Supported reasoning values depend on the model.
 `ds-flash` launches the GA `deepseek-flash` slug.
+Model controls retry once after startup if Codex rejects the selector while
+initializing. Status accepts the fast-mode footer and its temporary `default`
+effort before startup resolves the configured effort.
 The last actual `turn_context` is the authority for the model shown in status.
 Before the first turn, status may fall back to the configured/live selector.
 
@@ -112,6 +115,10 @@ account diagnostic; `/status` is the quick group-safe view.
 
 All chats share the agent's context. The bridge isolates destinations and replay
 records, not model memory. Separate bots have separate agent histories.
+
+When replying to a selected passage, the relay forwards Telegram's quoted text
+as the reply context and labels it as a quoted part. Ordinary replies include
+the full original text or caption. Selected quotes also survive timed delivery.
 
 ## Documents, photos and voice
 

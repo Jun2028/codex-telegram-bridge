@@ -203,12 +203,15 @@ def handle_update(
         }
     replied = message.get("reply_to_message")
     if isinstance(replied, dict):
-        replied_text = redact(_messages.visible_message_text(replied), env)
+        quote = _messages.quoted_reply_text(message)
+        replied_text = redact(quote or _messages.visible_message_text(replied), env)
         record["reply_to_message_id"] = replied.get("message_id")
         record["reply_to_sender"] = _messages.sender_label(replied)
         record["reply_to_text"] = replied_text[: args.max_log_chars]
         record["reply_to_text_full"] = replied_text
         record["reply_to_text_truncated"] = len(replied_text) > args.max_log_chars
+        if quote:
+            record["reply_to_is_quote"] = True
 
     reply_chunks: list[str] | None = None
     usage_state_path = Path(args.codex_usage_state_path)
