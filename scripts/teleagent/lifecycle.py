@@ -17,6 +17,7 @@ from . import settings as _settings
 from . import processes as _processes
 from . import state as _state
 from . import agy as _agy
+from . import dsh as _dsh
 
 
 def agent_lifecycle_state_path(args: argparse.Namespace) -> Path | None:
@@ -91,14 +92,15 @@ def build_codex_agent_command(
 ) -> str:
     repo_q = shlex.quote(str(repo_root))
     instance_q = shlex.quote(os.environ.get("TELEAGENT_INSTANCE", "main"))
-    codex_q = shlex.quote(codex_path)
+    binary_q = shlex.quote(codex_path)
     supervisor_q = shlex.quote(str(repo_root / "scripts" / "codex_agent_supervisor.sh"))
     model_q = shlex.quote(model)
     reasoning_q = shlex.quote(reasoning_effort)
+    binary_env = "TELEAGENT_DSH_BIN" if _dsh.is_dsh_model(model) else "TELEAGENT_CODEX_BIN"
     command = (
         f"cd {repo_q} && export TELEAGENT_INSTANCE={instance_q} && "
         "source scripts/relay_paths.sh && "
-        f"{codex_agent_env} TELEAGENT_CODEX_BIN={codex_q} {supervisor_q} "
+        f"{codex_agent_env} {binary_env}={binary_q} {supervisor_q} "
         f"--model {model_q} --reasoning-effort {reasoning_q}"
     )
     return command
@@ -118,19 +120,30 @@ def start_codex_agent(
 ) -> tuple[str, str, dict[str, Any] | None]:
     _processes.ensure_tmux_session(repo_root, session)
     target_pane = f"{session}:{window}.0"
-    if _settings.is_agy_model(model):
+    if _dsh.is_dsh_model(model):
+        if os.environ.get("TELEAGENT_CODEX_ACCESS_MODE", "full-access") == "chat-only":
+            raise RuntimeError(
+                "DeepSeek Harness requires full-access mode; this instance is chat-only"
+            )
+        agent_binary = _dsh.ensure_binary(repo_root)
+    elif _settings.is_agy_model(model):
         # Resolve agy aliases (g-flash, argon, ...) before the pane starts so
         # an unavailable model fails with a clear message instead of a
         # restart loop, and start a fresh agy conversation (the supervisor's
         # own crash restarts keep the recorded conversation).
         model = _agy.resolve_model(model)
+        agent_binary = _processes.codex_executable()
         log_dir = os.environ.get("TELEAGENT_LOG_DIR")
         if log_dir:
             (Path(log_dir) / "agy_conversation.json").unlink(missing_ok=True)
+    else:
+        agent_binary = _processes.codex_executable()
     agent_codex_home = _processes.codex_home_for_model(model)
     shell_command = _processes.tmux_bash_shell_command()
 
-    if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
+    if _dsh.is_dsh_model(model):
+        prepare_script = None
+    elif model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
         prepare_script = repo_root / "scripts" / "prepare_telegram_ds_codex_home.sh"
     elif (
         os.environ.get("TELEAGENT_INSTANCE", "main") != "main"
@@ -213,6 +226,10 @@ def start_codex_agent(
                     f"Agent not started: {target_pane} is occupied by {current_command or 'another process'}. Inspect /status before replacing it."
                 )
 
+    if _dsh.is_dsh_model(model):
+        log_dir = os.environ.get("TELEAGENT_LOG_DIR")
+        if log_dir:
+            (Path(log_dir) / "dsh_session.json").unlink(missing_ok=True)
     start_epoch = time.time()
     meta = agent_registry.create_agent(
         repo_root=repo_root,
@@ -226,7 +243,7 @@ def start_codex_agent(
     codex_agent_env = agent_registry.shell_env_prefix(meta)
     command = build_codex_agent_command(
         repo_root=repo_root,
-        codex_path=_processes.codex_executable(),
+        codex_path=agent_binary,
         codex_agent_env=codex_agent_env,
         model=model,
         reasoning_effort=reasoning_effort,

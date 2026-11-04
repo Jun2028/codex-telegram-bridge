@@ -54,12 +54,18 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+USE_DSH=0
+if tele_agent_is_dsh_model "$MODEL"; then
+  USE_DSH=1
+fi
 USE_AGY=0
 if tele_agent_is_agy_model "$MODEL"; then
   USE_AGY=1
 fi
 AGENT_LABEL="codex"
-if [[ "$USE_AGY" -eq 1 ]]; then
+if [[ "$USE_DSH" -eq 1 ]]; then
+  AGENT_LABEL="dsh"
+elif [[ "$USE_AGY" -eq 1 ]]; then
   AGENT_LABEL="agy"
 fi
 
@@ -68,7 +74,9 @@ if [[ -z "$REASONING_EFFORT" ]]; then
   if [[ "$MODEL" == "gpt-6-astra" ]]; then
     REASONING_EFFORT="medium"
   fi
-  if [[ "$USE_AGY" -eq 1 ]]; then
+  if [[ "$USE_DSH" -eq 1 ]]; then
+    REASONING_EFFORT="max"
+  elif [[ "$USE_AGY" -eq 1 ]]; then
     # Let agy choose its default thinking level.
     REASONING_EFFORT=""
   fi
@@ -82,7 +90,21 @@ case "$CHECK_FOR_UPDATE_ON_STARTUP" in
     ;;
 esac
 
-if [[ "$USE_AGY" -eq 1 ]]; then
+if [[ "$USE_DSH" -eq 1 ]]; then
+  DSH_BIN_VALUE="${TELEAGENT_DSH_BIN:-}"
+  if [[ -n "$DSH_BIN_VALUE" ]]; then
+    DSH_BIN_VALUE="$(command -v "$DSH_BIN_VALUE" 2>/dev/null || true)"
+  else
+    DSH_BIN_VALUE="$(command -v dsh 2>/dev/null || true)"
+  fi
+  if [[ -z "$DSH_BIN_VALUE" && -x "$TELEAGENT_DSH_HOME/cli/node_modules/.bin/dsh" ]]; then
+    DSH_BIN_VALUE="$TELEAGENT_DSH_HOME/cli/node_modules/.bin/dsh"
+  fi
+  if [[ -z "$DSH_BIN_VALUE" || ! -x "$DSH_BIN_VALUE" ]]; then
+    echo "dsh CLI not found (set TELEAGENT_DSH_BIN to override)" >&2
+    exit 1
+  fi
+elif [[ "$USE_AGY" -eq 1 ]]; then
   if ! command -v "${TELEAGENT_AGY_BIN:-agy}" >/dev/null 2>&1; then
     echo "agy CLI not found (set TELEAGENT_AGY_BIN to override)" >&2
     exit 1
@@ -130,7 +152,40 @@ PY
     "$(date -Iseconds)" "$AGENT_LABEL" "$MODEL" "$REASONING_EFFORT" "$ACCESS_MODE" \
     "$restart_count" >> "$LOG_PATH"
 
-  if [[ "$USE_AGY" -eq 1 ]]; then
+  if [[ "$USE_DSH" -eq 1 ]]; then
+    # Native DeepSeek Harness: the pane runs the dsh runner, which executes
+    # one headless DSH turn for each Telegram message.
+    DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"
+    if [[ -z "$DS_KEY_FILE" || ! -r "$DS_KEY_FILE" ]]; then
+      echo "TELEAGENT_DS_KEY_FILE must point to a readable DeepSeek key file" >&2
+      exit 1
+    fi
+    mkdir -p "$TELEAGENT_DSH_HOME"
+    chmod 700 "$TELEAGENT_DSH_HOME"
+    export DSH_HOME="$TELEAGENT_DSH_HOME"
+    set -a
+    # shellcheck disable=SC1090
+    source "$DS_KEY_FILE"
+    set +a
+    if [[ -z "${DEEPSEEK_API_KEY:-}" && -n "${OPENAI_API_KEY:-}" ]]; then
+      export DEEPSEEK_API_KEY="$OPENAI_API_KEY"
+    fi
+    unset OPENAI_API_KEY OPENAI_BASE_URL || true
+    dsh_runner_args=(
+      --model "$MODEL"
+      --effort "$REASONING_EFFORT"
+      --repo "$TELEAGENT_REPO"
+      --state-dir "$TELEAGENT_LOG_DIR"
+      --codex-home "$DSH_HOME"
+      --dsh-home "$DSH_HOME"
+      --dsh-bin "$DSH_BIN_VALUE"
+    )
+    set +e
+    PYTHONPATH="$SCRIPT_DIR" python3 "$SCRIPT_DIR/dsh_agent_runner.py" \
+      "${dsh_runner_args[@]}"
+    rc=$?
+    set -e
+  elif [[ "$USE_AGY" -eq 1 ]]; then
     # Antigravity (agy) harness: the pane runs the agy runner, not the Codex
     # TUI.  The runner keeps the agy conversation and writes the session
     # records the listener forwards to Telegram.

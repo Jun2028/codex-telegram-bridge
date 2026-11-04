@@ -45,6 +45,7 @@ new Telegram-specific command just to become a task.
 | `/interrupt NEW TASK` | Aborts the managed turn, verifies it stopped, then submits the replacement instruction. |
 | `/models` | Lists model names and example commands. |
 | `/model astra xhigh` | Selects GPT-6 Astra and effort. Changes within a Codex home preserve the conversation. |
+| `/dsh` | Switches to native DeepSeek Harness with Flash, max reasoning, and a fresh session. |
 | `/reasoning high` | Changes effort in the current conversation. |
 | `/kill_agent` | Stops the agent persistently; Telegram controls stay online. |
 | `/start_agent [MODEL] [LEVEL]` | Starts a stopped agent. |
@@ -101,10 +102,16 @@ configures DeepSeek V4 Flash, starts the supervised agent/listener and installs
 a crontab watchdog when available. It does not require Node.js. For an existing
 OpenAI-authenticated Codex installation, follow the [operator setup](docs/telegram_codex_agent.md).
 
+Install `requirements.txt` in the listener's Python environment before bootstrap;
+setup checks that the Markdown parser works. The shared
+[Telegram chat skill](.agents/skills/telegram-chat/SKILL.md) covers replies,
+formatting, files, photos, voice messages and size limits for agents on each host.
+
 The listener controls Codex; Codex connects to the model provider. Available
 models depend on that installation and account. The included aliases are Astra,
-Sol, Luna, Spark, DeepSeek Flash and DeepSeek Pro. `ds-flash` launches the GA
-`deepseek-flash` slug.
+Sol, Luna, Spark, DeepSeek Flash and DeepSeek Pro. `ds-flash` and `ds-pro` keep
+using the existing Codex harness with the DeepSeek provider. `/dsh [flash|pro]`
+starts the official native DeepSeek Harness instead and begins a fresh session.
 
 ## Private host configuration
 
@@ -122,7 +129,7 @@ personalities belong in ignored `config/personality.md` or
 
 ```bash
 scripts/check.sh
-# After reviewing and committing the changes:
+# After reviewing, testing, committing and pushing the changes:
 scripts/deploy_listener.sh
 ```
 

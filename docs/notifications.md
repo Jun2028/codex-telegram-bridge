@@ -7,11 +7,17 @@ finals; commentary has no phase label. New messages from the current chat steer
 the active request until its final answer, subject to the queue rules in the
 [operator guide](telegram_codex_agent.md).
 
+For replies, formatting, files, photos, voice messages and size limits, use
+the shared [Telegram chat skill](../.agents/skills/telegram-chat/SKILL.md).
+
 ## Configure and verify
 
 Credentials are stored only in the ignored `.secrets/notify.env`, or the
 instance-specific secret file selected by `TELEAGENT_SECRET_ENV`. Never print,
-log or commit them. To configure an unconfigured bot:
+log or commit them, or send them in any chat, including the owner's private chat.
+Use `<BOT_TOKEN>` in examples; redact the token from Telegram API request URLs
+and diagnostics. Follow the [bot token secrecy rules](../.agents/skills/telegram-chat/SKILL.md#credentials-and-file-access) when handling
+credentials. To configure an unconfigured bot:
 
 ```bash
 python3 scripts/setup_telegram_notify.py

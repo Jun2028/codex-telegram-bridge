@@ -44,9 +44,10 @@ if [[ "$TELEAGENT_INSTANCE" != "main" ]]; then
     TELEAGENT_CODEX_SOURCE_HOME TELEAGENT_CHAT_ONLY_CODEX_HOME \
     TELEAGENT_CHAT_ONLY_WORKDIR \
     TELEAGENT_CODEX_REASONING_EFFORT TELEAGENT_CODEX_WINDOW \
-    TELEAGENT_DS_CODEX_HOME TELEAGENT_DS_KEY_FILE TELEAGENT_INBOX_TARGET \
+    TELEAGENT_DS_CODEX_HOME TELEAGENT_DS_KEY_FILE TELEAGENT_DSH_BIN \
+    TELEAGENT_DSH_HOME TELEAGENT_DSH_VERSION TELEAGENT_INBOX_TARGET \
     TELEAGENT_INSTANCE_CONTEXT TELEAGENT_LOG_DIR TELEAGENT_MACHINE_CONTEXT \
-    TELEAGENT_SCRATCH TELEAGENT_SECRET_ENV \
+    TELEAGENT_SCRATCH TELEAGENT_SECRET_ENV TELEAGENT_MINI_APP_URL_FILE \
     TELEAGENT_PERSONALITY_FILE TELEAGENT_TMUX_SESSION
 fi
 unset TELEAGENT_PRESERVE_AGENT_BINDING
@@ -91,6 +92,8 @@ fi
 
 export TELEAGENT_CHAT_ONLY_CODEX_HOME="${TELEAGENT_CHAT_ONLY_CODEX_HOME:-$TELEAGENT_SCRATCH/chat-only-codex-home}"
 export TELEAGENT_CHAT_ONLY_WORKDIR="${TELEAGENT_CHAT_ONLY_WORKDIR:-$TELEAGENT_SCRATCH/chat-only-workspace}"
+export TELEAGENT_DSH_HOME="${TELEAGENT_DSH_HOME:-$TELEAGENT_SCRATCH/dsh-home}"
+export TELEAGENT_DSH_VERSION="${TELEAGENT_DSH_VERSION:-0.2.0-rc.2}"
 
 # Machine context: one shared file for facts about the whole box, plus this
 # instance's own file, which wins on conflict. Both are operator-owned and
@@ -151,6 +154,21 @@ tele_agent_is_deepseek_model() {
   case "${1:-}" in
     "$TELEAGENT_DEEPSEEK_FLASH_MODEL"|\
     "$TELEAGENT_DEEPSEEK_PRO_MODEL")
+      return 0
+      ;;
+  esac
+  return 1
+}
+
+# Native DeepSeek Harness (`dsh`). These launch ids remain distinct from the
+# Codex-backed DeepSeek provider models above. Keep in sync with
+# scripts/teleagent/dsh.py.
+export TELEAGENT_DSH_FLASH_MODEL="dsh-flash"
+export TELEAGENT_DSH_PRO_MODEL="dsh-pro"
+
+tele_agent_is_dsh_model() {
+  case "${1:-}" in
+    "$TELEAGENT_DSH_FLASH_MODEL"|"$TELEAGENT_DSH_PRO_MODEL")
       return 0
       ;;
   esac

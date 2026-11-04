@@ -1,10 +1,15 @@
 # Reviewed public source only. Unlisted files remain private.
+.agents/skills/telegram-chat/SKILL.md
+.agents/skills/telegram-chat/references/rendering.md
 .github/workflows/check.yml
 .gitignore
 LICENSE
 README.md
+requirements.txt
 config/chat-only-agent-instructions.md
 config/codex-chat-only.toml.template
+config/critic.config.toml.example
+config/critic.md
 config/deepseek/deepseek-flash.json
 config/deepseek/deepseek-v4-pro.json
 config/deepseek/models.json
@@ -19,6 +24,18 @@ docs/notifications.md
 docs/telegram_codex_agent.md
 docs/tmux_safety.md
 docs/writer.md
+examples/telegram-file-browser/.gitignore
+examples/telegram-file-browser/README.md
+examples/telegram-file-browser/connect-menu.py
+examples/telegram-file-browser/demo-files/data/results.csv
+examples/telegram-file-browser/demo-files/figures/results.png
+examples/telegram-file-browser/demo-files/notes/meeting.md
+examples/telegram-file-browser/demo-files/welcome.md
+examples/telegram-file-browser/public/app.js
+examples/telegram-file-browser/public/index.html
+examples/telegram-file-browser/public/style.css
+examples/telegram-file-browser/server.cjs
+examples/telegram-file-browser/test.cjs
 scripts/app_image_gen.py
 scripts/agy_agent_runner.py
 scripts/bootstrap_new_machine.sh
@@ -28,10 +45,12 @@ scripts/codex_agent_supervisor.sh
 scripts/codex_device_auth.py
 scripts/codex_rate_limits.py
 scripts/deploy_listener.sh
+scripts/dsh_agent_runner.py
 scripts/ensure_telegram_relay.sh
 scripts/export_public.py
 scripts/group_feed.py
 scripts/group_feed_listener.py
+scripts/install_dsh_harness.sh
 scripts/manual_codex_usage_reset.sh
 scripts/notify.py
 scripts/prepare_telegram_codex_home.sh
@@ -49,6 +68,7 @@ scripts/teleagent/attachments.py
 scripts/teleagent/auth.py
 scripts/teleagent/commands.py
 scripts/teleagent/delivery.py
+scripts/teleagent/dsh.py
 scripts/teleagent/events.py
 scripts/teleagent/identity.py
 scripts/teleagent/lifecycle.py
@@ -80,6 +100,7 @@ tests/test_agy_runtime.py
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
 tests/test_codex_reset_api.py
+tests/test_dsh_harness.py
 tests/test_goal_status_and_model_guard.py
 tests/test_deepseek_flash_wiring.py
 tests/test_deepseek_provider.py
@@ -99,8 +120,10 @@ tests/test_telegram_inbound_photos.py
 tests/test_telegram_inbound_voice.py
 tests/test_telegram_inbox_records.py
 tests/test_telegram_model_menu.py
+tests/test_telegram_mini_app.py
 tests/test_telegram_relay_queue.py
 tests/test_telegram_reply_routing.py
+tests/test_telegram_reply_quotes.py
 tests/test_telegram_timed_messages.py
 tests/test_telegram_usage_limit.py
 tests/test_tmux_isolated_test.py

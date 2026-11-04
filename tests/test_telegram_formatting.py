@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import unittest
 from pathlib import Path
@@ -20,6 +21,17 @@ from telegram_format import render_telegram_html  # noqa: E402
 
 
 class TelegramFormattingTests(unittest.TestCase):
+    def test_missing_parser_warns_but_preserves_safe_delivery(self) -> None:
+        result = subprocess.run(
+            [sys.executable, "-S", "-c",
+             "from telegram_format import render_telegram_html; "
+             "print(render_telegram_html('**bold** <raw>'))"],
+            cwd=SCRIPTS_DIR, capture_output=True, text=True, check=True,
+        )
+        self.assertIn("Telegram rich text is disabled", result.stderr)
+        self.assertIn("requirements.txt", result.stderr)
+        self.assertEqual(result.stdout.strip(), "**bold** &lt;raw&gt;")
+
     def test_renders_supported_commonmark_and_escapes_code(self) -> None:
         rendered = render_telegram_html(
             "# Result\n\n**bold** and `x < y`\n\n```python\nprint(\"a&b\")\n```"

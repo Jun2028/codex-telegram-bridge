@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+import telegram_agent_registry as agent_registry
+
 from . import settings as _settings
 from . import commands as _commands
 from . import auth as _auth
@@ -62,6 +64,7 @@ def enqueue_telegram_relay(
     target_pane: str,
     *,
     now: float | None = None,
+    agent_id: str | None = None,
 ) -> tuple[dict[str, Any], bool]:
     """Persist one normal Telegram update for FIFO delivery."""
     message = update.get("message") or update.get("edited_message") or {}
@@ -78,6 +81,8 @@ def enqueue_telegram_relay(
         "update": update,
         "update_id": update_id,
     }
+    if agent_id:
+        task["agent_id"] = agent_id
     state = _state.read_json_object(state_path)
     raw_tasks = state.get("tasks")
     tasks = (
@@ -115,6 +120,84 @@ def remove_telegram_relay_queue_task(state_path: Path, queue_id: str) -> None:
     remaining = [item for item in tasks if item.get("id") != queue_id]
     state.update({"tasks": remaining, "updated_ts": time.time(), "version": 1})
     _state.write_json_object(state_path, state)
+
+
+@_state.serialized
+def quarantine_stale_agent_queue_tasks(
+    state_path: Path,
+    active_agent: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Archive queued work that belongs to an agent other than the live one."""
+    active_agent_id = str(active_agent.get("agent_id") or "")
+    if not active_agent_id:
+        return []
+    try:
+        active_started_ts = float(active_agent.get("created_ts"))
+    except (TypeError, ValueError):
+        active_started_ts = 0.0
+
+    state = _state.read_json_object(state_path)
+    raw_tasks = state.get("tasks")
+    tasks = (
+        [item for item in raw_tasks if isinstance(item, dict)]
+        if isinstance(raw_tasks, list)
+        else []
+    )
+    raw_failed = state.get("failed")
+    failed = (
+        [item for item in raw_failed if isinstance(item, dict)]
+        if isinstance(raw_failed, list)
+        else []
+    )
+    now = time.time()
+    kept: list[dict[str, Any]] = []
+    orphaned: list[dict[str, Any]] = []
+    changed = False
+    for raw_task in tasks:
+        task = dict(raw_task)
+        task_agent_id = str(task.get("agent_id") or "")
+        stale = bool(task_agent_id and task_agent_id != active_agent_id)
+        if not task_agent_id:
+            try:
+                queued_ts = float(task.get("queued_ts"))
+            except (TypeError, ValueError):
+                queued_ts = 0.0
+            stale = bool(active_started_ts and queued_ts < active_started_ts)
+            if not stale:
+                task["agent_id"] = active_agent_id
+                changed = True
+        if not stale:
+            kept.append(task)
+            continue
+
+        task.update(
+            {
+                "status": "orphaned",
+                "orphaned_ts": now,
+                "failed_ts": now,
+                "last_error": (
+                    "agent changed before delivery; not sent to the replacement agent"
+                ),
+            }
+        )
+        failed = [
+            item for item in failed if item.get("id") != task.get("id")
+        ]
+        failed.append(task)
+        orphaned.append(task)
+        changed = True
+
+    if changed:
+        state.update(
+            {
+                "tasks": kept,
+                "failed": failed,
+                "updated_ts": now,
+                "version": 1,
+            }
+        )
+        _state.write_json_object(state_path, state)
+    return orphaned
 
 
 @_state.serialized
@@ -227,7 +310,7 @@ def dispatch_telegram_update(
     ):
         steering = same_chat_can_steer(args, update)
         should_queue = _lifecycle.agent_lifecycle_operation_in_progress(args)
-        if not should_queue and not steering:
+        if not should_queue:
             should_queue = bool(telegram_relay_queue_tasks(queue_path))
         if not should_queue and confirmation_path is not None:
             should_queue = bool(
@@ -243,10 +326,12 @@ def dispatch_telegram_update(
                 and _submission.codex_session_turn_active(checkpoint[0])
             )
     if should_queue and queue_path is not None:
+        active_agent = agent_registry.active_agent_for_pane(args.target_pane) or {}
         task, created = enqueue_telegram_relay(
             queue_path,
             update,
             args.target_pane,
+            agent_id=str(active_agent.get("agent_id") or "") or None,
         )
         _state.append_jsonl(
             log_path,
@@ -432,6 +517,28 @@ def drain_telegram_relay_queue(
     auth_path = getattr(args, "codex_auth_state_path", None)
     if auth_path and _auth.active_codex_auth_failure(Path(auth_path)):
         return []
+
+    active_agent = agent_registry.active_agent_for_pane(args.target_pane)
+    if active_agent is None:
+        if any(task.get("agent_id") for task in tasks):
+            return []
+    else:
+        orphaned = quarantine_stale_agent_queue_tasks(queue_path, active_agent)
+        if orphaned:
+            _state.append_jsonl(
+                log_path,
+                {
+                    "ts": int(time.time()),
+                    "event": "telegram_relay_queue_agent_changed",
+                    "quarantined": [
+                        task.get("message_id") for task in orphaned
+                    ],
+                    "target_pane": args.target_pane,
+                    "active_agent_id": active_agent.get("agent_id"),
+                },
+            )
+            return []
+        tasks = telegram_relay_queue_tasks(queue_path)
 
     task = tasks[0]
     update = task.get("update")

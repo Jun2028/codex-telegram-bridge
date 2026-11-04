@@ -52,6 +52,9 @@ def timed_message_snapshot(
     }
     if isinstance(message.get("message_thread_id"), int):
         snapshot["message_thread_id"] = message["message_thread_id"]
+    quote = message.get("quote")
+    if isinstance(quote, dict):
+        snapshot["quote"] = dict(quote)
     replied = message.get("reply_to_message")
     if isinstance(replied, dict):
         snapshot["reply_to_message"] = {
@@ -61,9 +64,6 @@ def timed_message_snapshot(
             "text": replied.get("text"),
             "caption": replied.get("caption"),
         }
-    quote = _messages.quoted_reply_text(message)
-    if quote:
-        snapshot["quote"] = {"text": quote}
     return snapshot
 
 

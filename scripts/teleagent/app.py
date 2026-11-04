@@ -1060,12 +1060,7 @@ def main() -> int:
                 token,
                 "setMyCommands",
                 {
-                    "commands": json.dumps(
-                        [
-                            {"command": command, "description": description}
-                            for command, description in _ui.MENU
-                        ]
-                    )
+                    "commands": json.dumps(_ui.command_menu(env))
                 },
             )
         except Exception as exc:

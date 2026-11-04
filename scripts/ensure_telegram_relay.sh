@@ -35,7 +35,7 @@ agent_healthy() {
   )
   [ -n "$supervisor_pid" ] || return 1
   case "$(ps -o comm= --ppid "$supervisor_pid" 2>/dev/null || true)" in
-    codex|codex-agy)
+    codex|codex-agy|codex-dsh)
       return 0
       ;;
   esac
@@ -43,7 +43,7 @@ agent_healthy() {
   # starts; accept the command line during that brief startup window so a
   # watchdog tick cannot replace a healthy agy agent with the default model.
   ps -o args= --ppid "$supervisor_pid" 2>/dev/null \
-    | grep -Fq 'agy_agent_runner.py'
+    | grep -Eq 'agy_agent_runner.py|dsh_agent_runner.py'
 }
 
 inbox_healthy() {

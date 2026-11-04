@@ -17,6 +17,7 @@ from notify import redact
 from . import settings as _settings
 from . import attachments as _attachments
 from . import auth as _auth
+from . import dsh as _dsh
 from . import identity as _identity
 from . import lifecycle as _lifecycle
 from . import messages as _messages
@@ -800,6 +801,56 @@ def handle_update(
                 else f"Failed to {verb} agent: {_transport.short_error(exc, env)}"
             )
             record["action"] = command.lstrip("/") + "_failed"
+            record["error"] = _transport.short_error(exc, env, args.max_log_chars)
+    elif command == "/dsh":
+        try:
+            model, reasoning_effort = _dsh.parse_launch_payload(payload)
+            _lifecycle.set_agent_desired_state(
+                args,
+                _settings.AGENT_DESIRED_RUNNING,
+                "telegram_dsh",
+            )
+            target_pane, result, meta = _lifecycle.start_codex_agent(
+                repo_root=args.repo_root,
+                session=args.session,
+                window=args.codex_window,
+                restart=True,
+                model=model,
+                reasoning_effort=reasoning_effort,
+            )
+            args.target_pane = target_pane
+            native_model = _dsh.native_model(model)
+            reply = (
+                f"DeepSeek Harness started in {target_pane} with "
+                f"model={native_model}, reasoning={reasoning_effort}. "
+                "This switch starts a fresh session."
+            )
+            record["action"] = "dsh"
+            record["target_pane"] = target_pane
+            record["agent_model"] = native_model
+            record["agent_reasoning_effort"] = reasoning_effort
+            record["relay_result"] = result
+            if meta:
+                record["agent_id"] = meta.get("agent_id")
+                record["agent_jsonl"] = meta.get("agent_jsonl")
+                record["codex_session_path"] = meta.get("codex_session_path")
+                agent_registry.append_agent_event(
+                    meta,
+                    {
+                        "event": "telegram_dsh_switched",
+                        "message_id": message.get("message_id"),
+                        "model": native_model,
+                        "reasoning_effort": reasoning_effort,
+                        "sender": _messages.sender_label(message),
+                        "update_id": update.get("update_id"),
+                    },
+                )
+        except Exception as exc:
+            reply = (
+                "Failed to switch to DeepSeek Harness: "
+                + _transport.short_error(exc, env)
+            )
+            record["action"] = "dsh_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
     elif command == "/model":
         try:

@@ -26,11 +26,19 @@ class PublicExportTests(unittest.TestCase):
             "private/hpc/accounting.py",
             "../private.py",
             "/private.py",
+            "AGENTS.md",
+            ".secrets/notify.env",
+            "config/relay.env",
+            "examples/telegram-file-browser/.runtime/launch-url",
+            "examples/telegram-file-browser/Open demo.html",
+            "C:\\private.py",
         }:
             self.assertFalse(export_public.allowed(name, {name}), name)
 
     def test_export_rejects_personal_paths_and_credentials(self):
         for data in (b"/home/" + b"private-person/work", b"/nfs/home/" + b"svu/private-person/work",
+                     b"C:\\Users\\" + b"private-person/work",
+                     b"C:/Users/" + b"private-person/work",
                      b"sk-" + b"x" * 40):
             with self.assertRaises(ValueError):
                 export_public.check_public_content("fixture.py", data)

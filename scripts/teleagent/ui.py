@@ -5,13 +5,14 @@ from __future__ import annotations
 import time
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 from notify import redact
 
 from . import replies
 from . import messages, routing, state, status, transport
 from .settings import SGT
 
-QUICK_COMMANDS = {"/start", "/help", "/ping", "/status", "/queue", "/cancel", "/models"}
+QUICK_COMMANDS = {"/start", "/help", "/ping", "/status", "/queue", "/cancel", "/models", "/files"}
 MENU = [
     ("status", "Agent state and reply delivery"),
     ("queue", "Waiting messages and failed deliveries"),
@@ -19,6 +20,7 @@ MENU = [
     ("models", "Choose a model and reasoning level"),
     ("codex_reset", "Check and redeem an available Codex usage reset"),
     ("interrupt", "Stop the current turn and submit a new instruction"),
+    ("dsh", "Switch to the native DeepSeek Harness"),
     ("start_agent", "Start the stopped agent"),
     ("kill_agent", "Stop the agent; keep Telegram online"),
     ("restart_agent", "Start a fresh conversation"),
@@ -35,6 +37,30 @@ BUTTONS = {
 }
 
 
+def mini_app_url(env: dict | None) -> str:
+    path = (env or {}).get("TELEAGENT_MINI_APP_URL_FILE")
+    if not path:
+        return ""
+    try:
+        url = Path(path).read_text(encoding="utf-8").strip()
+        parsed = urlsplit(url)
+        if (parsed.scheme == "https" and parsed.hostname
+                and not parsed.username and not parsed.password
+                and not any(c.isspace() or ord(c) < 32 for c in url)):
+            return url
+    except (OSError, ValueError):
+        pass
+    return ""
+
+
+def command_menu(env: dict | None = None) -> list[dict]:
+    commands = list(MENU)
+    if mini_app_url(env):
+        commands.append(("files", "Open the file browser in private chat"))
+    return [{"command": name, "description": description}
+            for name, description in commands]
+
+
 def help_text() -> str:
     return (
         "Send a task as text, code, a document, photo or voice note.\n"
@@ -47,6 +73,8 @@ def help_text() -> str:
         "/timed HOURS MESSAGE — send a task later\n\n"
         "/kill_agent stops the agent; /start_agent starts it.\n"
         "/restart_agent starts a fresh conversation.\n"
+        "/dsh [flash|pro] [LEVEL] switches to native DeepSeek Harness "
+        "(default: Flash, max).\n"
         "/recent_messages and /replay_last recover earlier requests.\n"
         "/codex_usage and /reauth manage sign-in in private.\n\n"
         "In groups: @mention this bot or reply to it. Replies stay in the "
@@ -64,6 +92,8 @@ def models_text() -> str:
         "ds-flash / ds-pro — DeepSeek V4\n"
         "g-flash / argon / sonnet / opus / oss — Antigravity (agy) harness; "
         "start with /restart_agent NAME [LEVEL]\n\n"
+        "/dsh [flash|pro] [off|low|high|max] switches to the native "
+        "DeepSeek Harness with a fresh session; the default is Flash/max.\n\n"
         "Example: /model astra xhigh\n"
         "/reasoning high changes effort in the current chat.\n"
         "Changing provider starts a fresh conversation; changes within the "
@@ -288,6 +318,8 @@ def handle_quick_update(
     if chat_id is None:
         return True
     topic = message.get("message_thread_id")
+    # Never send the private launch credential into a group, even for its owner.
+    file_url = mini_app_url(env) if owner and not is_group else ""
     if command == "/status":
         auth_path = getattr(args, "codex_auth_state_path", "")
         auth = state.read_json_object(Path(auth_path)) if auth_path else {}
@@ -311,16 +343,27 @@ def handle_quick_update(
         reply = models_text()
     elif command == "/ping":
         reply = "Online. /status shows the agent; /queue shows waiting work."
+    elif command == "/files":
+        reply = ("Open the file browser below." if file_url else
+                 "Open /files in the bot owner's private chat." if is_group else
+                 "The file browser is not configured or its launch URL is unavailable.")
     else:
         reply = help_text()
+        if file_url:
+            reply += "\n\n/files opens the file browser inside Telegram."
+    buttons = None
+    if command in {"/status", "/help", "/start", "/queue", "/files"}:
+        buttons = {"inline_keyboard": [*BUTTONS["inline_keyboard"]]}
+        if file_url:
+            buttons["inline_keyboard"].append([
+                {"text": "Files", "web_app": {"url": file_url}}
+            ])
     replies.send(
         args,
         token,
         chat_id,
         redact(reply, env or {}),
         message_thread_id=topic,
-        reply_markup=BUTTONS
-        if command in {"/status", "/help", "/start", "/queue"}
-        else None,
+        reply_markup=buttons,
     )
     return True

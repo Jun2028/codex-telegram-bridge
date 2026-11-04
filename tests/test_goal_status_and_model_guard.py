@@ -70,6 +70,7 @@ class GoalStatusTests(unittest.TestCase):
         scratch = self.home / "scratch-databases"
         scratch.mkdir()
         with sqlite3.connect(scratch / "goals_1.sqlite") as db:
+            self.addCleanup(db.close)
             db.execute("CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY, status TEXT)")
             db.execute("INSERT INTO thread_goals VALUES ('bound-thread', 'active')")
         self.assertEqual(

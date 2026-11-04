@@ -7,10 +7,13 @@ controls; Codex performs the requested work with the configured host access.
 ## Existing Codex installation
 
 Install Python 3.11+, tmux and a Codex CLI compatible with your chosen model.
-Optional `markdown-it-py` improves CommonMark rendering; the relay includes a
-fallback. Sign in using the installed Codex CLI before starting the agent.
+Install `requirements.txt` into the Python environment used by the listener;
+`markdown-it-py` is required for rich text. Without it, emergency delivery stays
+available but messages contain literal Markdown and the listener logs a warning.
+Sign in using the installed Codex CLI before starting the agent.
 
 ```bash
+python3 -m pip install -r requirements.txt
 cp config/relay.env.template config/relay.env
 # Edit this ignored file for your installed provider, for example:
 # export TELEAGENT_CODEX_MODEL="gpt-6-astra"
@@ -19,6 +22,14 @@ python3 scripts/setup_telegram_notify.py
 python3 scripts/notify.py --title "notify test" --message "dry run" --dry-run
 scripts/start_codex_agent.sh
 ```
+
+If system Python is externally managed, use a virtual environment and make its
+`bin` directory part of the listener/watchdog's persistent PATH. Installing into
+an interactive shell's different Python does not fix the running listener.
+Restart only the listener after installing a missing parser; keep the agent,
+conversation and delivery offsets intact. See the shared
+[Telegram chat skill](../.agents/skills/telegram-chat/SKILL.md) for message syntax
+and rendering diagnostics.
 
 The launcher starts `tele-agent:codex.0`, keeps it under the agent supervisor and
 starts/retargets the inbox. For a separate listener start, use
@@ -35,6 +46,9 @@ dates and reasons. An unconfirmed receipt does not mean the task failed;
 check before resending. Cancel an unsent item with
 `/cancel` when only one item is waiting, `/cancel 1` for the numbered item in
 `/queue`, or `/cancel all`. Cancellation does not interrupt the running task.
+Queued work belongs to the agent that accepted it. `/restart_agent` does not
+replay undelivered work into the replacement agent; those items are retained as
+delivery problems so they can be reviewed and resent deliberately.
 
 Input from the bound chat can steer the task, including automatic Goal-mode
 continuations. The goal keeps its originating chat/topic across turns; other
@@ -54,13 +68,38 @@ UTF-16 limit instead of silently truncated. Formatting rejection falls back
 to plain text. A rare ambiguous network acknowledgment can produce a duplicate;
 see [delivery guarantees](architecture.md).
 
+## Optional file browser
+
+The [Mini App file browser](../examples/telegram-file-browser/README.md) adds
+`/files` and a Files button below status/help messages in the owner's private
+chat. It preserves the command menu and the existing Refresh, Queue and Help
+buttons. Set `TELEAGENT_MINI_APP_URL_FILE` to a private file containing its HTTPS
+launch URL; the listener reads it on each request. Group replies never contain
+the private launch URL. The demo exposes only its configured demo folder.
+
 ## Model controls
 
 `/models` lists aliases. Use `/model NAME [LEVEL]` or `/reasoning LEVEL`.
 The managed default model is `gpt-6.1-sol` (GPT-6.1 Sol); `sol` and `latest`
 select it. `astra` selects GPT-6 Astra; the other aliases are `luna`, `spark`,
 `ds-flash` and `ds-pro`. Supported reasoning values depend on the model.
-`ds-flash` launches the GA `deepseek-flash` slug.
+`ds-flash` and `ds-pro` keep using the Codex harness with the DeepSeek provider.
+Use `/dsh [flash|pro] [off|low|high|max]` to switch the bot to the official
+native DeepSeek Harness (`dsh`) instead. Plain `/dsh` selects Flash with
+reasoning `max`. The switch always starts a fresh DeepSeek Harness session; it
+does not migrate the Codex conversation. The
+running DSH pane reuses its own session id between Telegram turns when DSH
+accepts it, without a cross-process continuity guarantee. Use
+`/restart_agent` to return to a fresh Codex conversation.
+
+The first `/dsh` launch installs `@deepseek-ai/dsh` into this instance's private
+`TELEAGENT_DSH_HOME/cli` when no `dsh` executable is available. This requires
+Node.js 22.19 or newer and npm. Set `TELEAGENT_DSH_BIN` to use an existing
+binary or `TELEAGENT_DSH_VERSION` to pin an npm version. Native DSH is available
+only in full-access mode; a chat-only instance rejects `/dsh`. `/model` and
+`/reasoning` cannot mutate a running DSH agent; invoke `/dsh` with the desired
+model and level instead.
+
 Model controls retry once after startup if Codex rejects the selector while
 initializing. Status accepts the fast-mode footer and its temporary `default`
 effort before startup resolves the configured effort.

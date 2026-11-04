@@ -45,6 +45,10 @@ if [ -n "$missing" ]; then
   fi
 fi
 
+step "Checking Telegram rich-text rendering"
+python3 -c 'from markdown_it import MarkdownIt; assert MarkdownIt("commonmark").renderInline("**ok**") == "<strong>ok</strong>"' || \
+  die "markdown-it-py is required in the listener's Python environment. Install requirements.txt there before continuing (use a virtual environment if system Python is externally managed)."
+
 codex_is_compatible() {
   command -v codex >/dev/null 2>&1 || return 1
   python3 - "$(codex --version 2>/dev/null || true)" <<'PY'

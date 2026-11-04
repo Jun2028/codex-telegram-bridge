@@ -1,0 +1,2 @@
+# CommonMark-to-Telegram rendering; install in the listener's Python environment.
+markdown-it-py>=3,<5

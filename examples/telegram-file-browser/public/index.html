@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark"><title>Machine Files</title>
+  <link rel="stylesheet" href="/style.css"><script src="https://telegram.org/js/telegram-web-app.js" defer></script><script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar"><div class="brand-icon" aria-hidden="true">▤</div><div><h1>Machine Files</h1><p id="machine">Connecting to the demo folder…</p></div><span id="connection" class="connection">Connecting</span></header>
+  <main>
+    <aside id="browser" aria-label="File browser">
+      <div class="browser-head"><span class="eyebrow">FILES ON THIS MACHINE</span><button id="refresh" class="icon-button" title="Refresh folder" aria-label="Refresh folder">↻</button></div>
+      <nav id="breadcrumbs" aria-label="Folder path"></nav>
+      <label class="search"><span aria-hidden="true">⌕</span><input id="filter" type="search" placeholder="Filter this folder" aria-label="Filter this folder"></label>
+      <div class="list-heading"><span>Name</span><span>Size</span></div>
+      <div id="file-list" role="list" aria-label="Files"></div>
+      <p id="file-count" class="muted"></p>
+      <div class="folder-note"><span class="green-dot"></span><div><strong>Real files, on disk</strong><p>Changes are saved to this PC’s demo folder.</p></div></div>
+    </aside>
+    <section id="workspace" aria-label="File preview and editor">
+      <div id="empty" class="empty"><div class="empty-icon">▤</div><h2>Your files, wherever you work.</h2><p>Open a folder, preview an image,<br>or edit a text file and save it to this machine.</p><button id="start-demo" class="primary">Open welcome.md <span aria-hidden="true">→</span></button><div class="hint">Browse · Preview · Edit · Save</div></div>
+      <div id="file-view" hidden>
+        <div class="editor-toolbar"><button id="back" class="icon-button" aria-label="Back to files">←</button><div class="file-title"><h2 id="file-name"></h2><p id="file-path"></p></div><button id="download" class="secondary">Download</button><button id="save" class="primary" disabled>Save changes</button></div>
+        <div id="notice" role="status" hidden></div>
+        <div id="text-view" class="text-view"><pre id="line-numbers" aria-hidden="true"></pre><textarea id="editor" aria-label="File contents" spellcheck="false" wrap="off"></textarea></div>
+        <div id="image-view" class="image-view" hidden><img id="preview-image" alt="Selected file preview"></div>
+        <div id="binary-view" class="empty" hidden><h2>Download to open this file</h2><p>This file type has no preview in the demo.</p></div>
+        <footer class="editor-status"><span id="save-state">Saved on this machine</span><span id="file-details"></span><button id="reload" class="text-button">Reload from disk</button></footer>
+      </div>
+    </section>
+  </main>
+  <div id="toast" role="status" hidden></div>
+</body>
+</html>

@@ -98,6 +98,23 @@ def tmux_pane_has_agy_process(target_pane: str) -> bool:
     return False
 
 
+def tmux_pane_has_dsh_process(target_pane: str) -> bool:
+    """Return whether the pane runs the native DeepSeek Harness runner."""
+    root_pid = agent_registry.tmux_pane_pid(target_pane)
+    if root_pid is None:
+        return False
+    for pid in agent_registry.descendants(root_pid):
+        try:
+            command_name = (
+                Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+            )
+        except OSError:
+            continue
+        if command_name == "codex-dsh":
+            return True
+    return False
+
+
 def codex_process_identity(target_pane: str) -> str | None:
     """Return a PID-reuse-safe identity for the Codex process in a tmux pane."""
     try:
@@ -250,6 +267,17 @@ def codex_home_for_model(model: str) -> Path:
             str(Path.home() / ".local" / "share" / "tele-agent"),
         )
     )
+    if model in {"dsh-flash", "dsh-pro"}:
+        return (
+            Path(
+                os.environ.get(
+                    "TELEAGENT_DSH_HOME",
+                    str(scratch / "dsh-home"),
+                )
+            )
+            .expanduser()
+            .resolve()
+        )
     if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
         return (
             Path(

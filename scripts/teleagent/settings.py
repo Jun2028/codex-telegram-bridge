@@ -16,8 +16,8 @@ SHELL_COMMANDS = {"bash", "sh", "zsh", "fish", "csh", "tcsh", "dash", "ksh"}
 
 
 # Process comm names that the relay treats as an agent runtime in a pane.
-# `codex-agy` is the Antigravity CLI harness runner (see scripts/agy_agent_runner.py).
-CODEX_COMMANDS = {"codex", "codex-agy"}
+# `codex-agy` and `codex-dsh` are native harness runners.
+CODEX_COMMANDS = {"codex", "codex-agy", "codex-dsh"}
 
 
 DEFAULT_SCRATCH = os.environ.get(

@@ -1,0 +1,8 @@
+# Copy to $CODEX_HOME/critic.config.toml and set the absolute prompt path.
+model = "gpt-6-astra"
+model_reasoning_effort = "high"
+model_instructions_file = "/absolute/path/to/tele-agent/config/critic.md"
+
+developer_instructions = """
+Evaluate the supplied composition using the independent editorial critic base prompt. Deliver the critique as your final response.
+"""

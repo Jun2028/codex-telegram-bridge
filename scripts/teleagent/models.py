@@ -258,6 +258,11 @@ def set_codex_model(
         raise RuntimeError(f"tmux target not found: {target_pane}")
     if not _processes.tmux_pane_has_codex_process(target_pane):
         raise RuntimeError(f"target {target_pane} is not running Codex")
+    if _processes.tmux_pane_has_dsh_process(target_pane):
+        raise RuntimeError(
+            "this chat runs the native DeepSeek Harness; "
+            "use /dsh or /restart_agent to start a fresh harness"
+        )
     if _processes.tmux_pane_has_agy_process(target_pane):
         raise RuntimeError(
             "this chat runs the agy (Antigravity) harness; "
@@ -323,6 +328,11 @@ def set_codex_reasoning_effort(target_pane: str, effort: str) -> str:
         raise RuntimeError(f"tmux target not found: {target_pane}")
     if not _processes.tmux_pane_has_codex_process(target_pane):
         raise RuntimeError(f"target {target_pane} is not running Codex")
+    if _processes.tmux_pane_has_dsh_process(target_pane):
+        raise RuntimeError(
+            "this chat runs the native DeepSeek Harness; "
+            "use /dsh [flash|pro] [LEVEL] to change it"
+        )
     if _processes.tmux_pane_has_agy_process(target_pane):
         raise RuntimeError(
             "this chat runs the agy (Antigravity) harness; "

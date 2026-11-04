@@ -365,6 +365,11 @@ class TelegramTimedMessageTests(unittest.TestCase):
                     self.fail(f"{payload!r} should have failed")
 
     def test_due_message_uses_confirmed_normal_relay_and_only_delivers_once(self) -> None:
+        self.message["quote"] = {
+            "text": "context",
+            "position": 9,
+            "is_manual": True,
+        }
         self._schedule()
         checkpoint = (self.session, 0)
         delivery_order: list[str] = []
@@ -431,7 +436,11 @@ class TelegramTimedMessageTests(unittest.TestCase):
         self.assertIn("> check the goal agent now", send_reply.call_args.args[2])
         self.assertIn("[TELEGRAM USER MESSAGE message_id=4197", relay_texts[0])
         self.assertIn("@tester | Test | 456", relay_texts[0])
-        self.assertIn("Previous context remains available.", relay_texts[0])
+        self.assertNotIn("Previous context remains available.", relay_texts[0])
+        self.assertIn(
+            "\ncontext\n[/QUOTED PART OF TELEGRAM MESSAGE]",
+            relay_texts[0],
+        )
         task = self._state_task()
         self.assertEqual(task["status"], "delivered")
         self.assertEqual(task["visible_echo_message_id"], 5001)

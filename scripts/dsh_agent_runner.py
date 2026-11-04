@@ -1,0 +1,387 @@
+#!/usr/bin/env python3
+"""Run the native DeepSeek Harness inside a tele-agent tmux pane.
+
+The runner keeps the pane alive while each Telegram message runs one
+``dsh --profile headless --json`` turn. DSH events are converted into the
+session records that the Telegram listener already forwards.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import queue
+import subprocess
+import sys
+import tempfile
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
+
+from teleagent import dsh as dsh_runtime  # noqa: E402
+
+
+PROCESS_COMM = "codex-dsh"
+SUBMIT_IDLE_SECONDS = 1.0
+
+
+def utc_now_iso() -> str:
+    return (
+        datetime.now(timezone.utc)
+        .isoformat(timespec="milliseconds")
+        .replace("+00:00", "Z")
+    )
+
+
+def set_process_comm(name: str = PROCESS_COMM) -> None:
+    try:
+        with open("/proc/self/comm", "w", encoding="ascii") as handle:
+            handle.write(name)
+    except OSError:
+        pass
+
+
+class SessionLog:
+    def __init__(self, codex_home: Path, repo: Path) -> None:
+        # DSH rejects flat .jsonl files directly under a project directory.
+        # Keep the relay log one level deeper so DSH can still scan its session
+        # root while the listener can discover this open log via process FD.
+        project_dir = codex_home / "sessions" / "dsh"
+        sessions_dir = project_dir / "telegram"
+        sessions_dir.mkdir(parents=True, exist_ok=True)
+        for legacy in project_dir.glob("rollout-dsh-*.jsonl"):
+            legacy.replace(sessions_dir / legacy.name)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+        self.path = sessions_dir / f"rollout-dsh-{stamp}-{uuid.uuid4()}.jsonl"
+        self._handle = self.path.open("a", encoding="utf-8")
+        self.write(
+            {
+                "type": "session_meta",
+                "timestamp": utc_now_iso(),
+                "payload": {
+                    "id": str(uuid.uuid4()),
+                    "cwd": str(repo),
+                    "source": "dsh-cli",
+                    "originator": "tele-agent/dsh",
+                },
+            }
+        )
+
+    def write(self, record: dict) -> None:
+        self._handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        self._handle.flush()
+
+    def close(self) -> None:
+        self._handle.close()
+
+    def agent_message(self, text: str, *, phase: str) -> None:
+        self.write(
+            {
+                "type": "event_msg",
+                "timestamp": utc_now_iso(),
+                "payload": {
+                    "type": "agent_message",
+                    "id": str(uuid.uuid4()),
+                    "message": text,
+                    "phase": phase,
+                },
+            }
+        )
+
+    def turn_context(self, model: str, effort: str) -> None:
+        self.write(
+            {
+                "type": "turn_context",
+                "timestamp": utc_now_iso(),
+                "payload": {"model": model, "effort": effort},
+            }
+        )
+
+    def turn_started(self, message: str) -> None:
+        turn_id = str(uuid.uuid4())
+        self.write(
+            {
+                "type": "event_msg",
+                "timestamp": utc_now_iso(),
+                "payload": {"type": "task_started", "turn_id": turn_id},
+            }
+        )
+        self.write(
+            {
+                "type": "response_item",
+                "timestamp": utc_now_iso(),
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": message}],
+                    "id": str(uuid.uuid4()),
+                },
+            }
+        )
+
+    def turn_finished(self, *, aborted: bool = False) -> None:
+        self.write(
+            {
+                "type": "event_msg",
+                "timestamp": utc_now_iso(),
+                "payload": {
+                    "type": "turn_aborted" if aborted else "task_complete",
+                },
+            }
+        )
+
+
+class MessageAssembler:
+    def __init__(self, idle_seconds: float = SUBMIT_IDLE_SECONDS) -> None:
+        self.idle_seconds = idle_seconds
+        self.pending: list[str] = []
+
+    def feed(self, line: str) -> None:
+        self.pending.append(line)
+
+    def take(self) -> str | None:
+        if not self.pending:
+            return None
+        message = "\n".join(self.pending).strip()
+        self.pending = []
+        return message or None
+
+
+class StdinReader(threading.Thread):
+    def __init__(
+        self,
+        events: "queue.Queue[tuple[str, str]]",
+        on_interrupt: "Callable[[], None] | None" = None,
+    ) -> None:
+        super().__init__(daemon=True)
+        self.events = events
+        self.on_interrupt = on_interrupt
+
+    def run(self) -> None:
+        while True:
+            try:
+                raw = sys.stdin.readline()
+            except (OSError, ValueError):
+                break
+            if raw == "":
+                self.events.put(("eof", ""))
+                break
+            line = raw.rstrip("\n")
+            if "\x1b" in line:
+                remainder = line.replace("\x1b", "").strip()
+                if self.on_interrupt is not None:
+                    self.on_interrupt()
+                self.events.put(("interrupt", ""))
+                if remainder:
+                    self.events.put(("line", remainder))
+                continue
+            self.events.put(("line", line))
+
+
+class DshAgentRunner:
+    def __init__(
+        self,
+        *,
+        model: str,
+        effort: str,
+        repo: Path,
+        state_dir: Path,
+        codex_home: Path,
+        dsh_bin: str,
+        dsh_home: Path,
+    ) -> None:
+        self.requested_model = model
+        self.model = dsh_runtime.native_model(model)
+        self.effort = effort
+        self.repo = repo
+        self.state_dir = state_dir
+        self.codex_home = codex_home
+        self.dsh_bin = dsh_bin
+        self.dsh_home = dsh_home
+        self.log = SessionLog(codex_home, repo)
+        self.log.turn_context(self.model, self.effort)
+        self.overlay_path = state_dir / "dsh-model.patch.yml"
+        dsh_runtime.write_model_overlay(self.overlay_path, model, effort)
+        self.session_path = state_dir / "dsh_session.json"
+        self.session_id = self._load_session_id()
+        self._current_process: subprocess.Popen[str] | None = None
+        self._interrupted = False
+
+    def _load_session_id(self) -> str:
+        try:
+            data = json.loads(self.session_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return ""
+        value = data.get("session_id")
+        return value if isinstance(value, str) else ""
+
+    def _save_session_id(self) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        temporary = self.session_path.with_suffix(".tmp")
+        temporary.write_text(
+            json.dumps({"session_id": self.session_id}), encoding="utf-8"
+        )
+        temporary.chmod(0o600)
+        temporary.replace(self.session_path)
+
+    def _environment(self) -> dict[str, str]:
+        env = dict(os.environ)
+        env["DSH_HOME"] = str(self.dsh_home)
+        env["DSH_PERMISSION_MODE"] = "danger-full-access"
+        env["DSH_TELEMETRY_DISABLED"] = "1"
+        # HPC /tmp can be mounted noexec; DSH's optional native-addon cache
+        # then fails to map its binding. Load the installed binding in place.
+        env["NARB_DISABLE_NATIVE_CACHE"] = "1"
+        return env
+
+    def banner(self) -> None:
+        print(
+            f"DeepSeek Harness ready · model={self.model} · effort={self.effort}",
+            flush=True,
+        )
+        print("Type a message.  ESC interrupts a running turn.", flush=True)
+
+    def interrupt(self) -> None:
+        process = self._current_process
+        if process is not None and process.poll() is None:
+            self._interrupted = True
+            process.terminate()
+            print("\n[interrupt requested]", flush=True)
+
+    @staticmethod
+    def _safe_error(value: str, fallback: str) -> str:
+        lines = [line.strip() for line in value.splitlines() if line.strip()]
+        detail = next(
+            (line for line in reversed(lines) if line.startswith("dsh:")),
+            lines[-1] if lines else fallback,
+        )
+        return " ".join(detail.split())[:600]
+
+    def run_message(self, message: str) -> None:
+        print(f"\n▶ {message.splitlines()[0][:160]}", flush=True)
+        self.log.turn_context(self.model, self.effort)
+        self.log.turn_started(message)
+        command = dsh_runtime.build_turn_command(
+            dsh_bin=self.dsh_bin,
+            overlay_path=self.overlay_path,
+            session_id=self.session_id or None,
+        )
+        result = dsh_runtime.DshTurnResult()
+        self._interrupted = False
+        with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as prompt_file:
+            prompt_file.write(message)
+            prompt_file.seek(0)
+            with tempfile.TemporaryFile(mode="w+", encoding="utf-8") as stderr_file:
+                process = subprocess.Popen(
+                    command,
+                    stdin=prompt_file,
+                    stdout=subprocess.PIPE,
+                    stderr=stderr_file,
+                    text=True,
+                    env=self._environment(),
+                )
+                self._current_process = process
+                assert process.stdout is not None
+                try:
+                    for event in dsh_runtime.iter_stream_events(process.stdout):
+                        result.events.append(event)
+                        dsh_runtime.apply_stream_event(result, event)
+                        if event.get("type") == "tool_call":
+                            tool = str(event.get("tool") or "tool")
+                            print(f"[dsh] {tool}", flush=True)
+                finally:
+                    returncode = process.wait()
+                    self._current_process = None
+
+                if result.session_id and result.session_id != self.session_id:
+                    self.session_id = result.session_id
+                    self._save_session_id()
+
+                if self._interrupted:
+                    print("\n[turn interrupted]", flush=True)
+                    self.log.agent_message(
+                        "[DeepSeek Harness turn interrupted]", phase="commentary"
+                    )
+                    self.log.turn_finished(aborted=True)
+                    return
+                if returncode == 0 and result.text:
+                    self.log.agent_message(result.text, phase="final_answer")
+                    self.log.turn_finished()
+                    return
+
+                stderr_file.seek(0)
+                stderr = stderr_file.read()
+                error = self._safe_error(
+                    result.error or stderr,
+                    f"DeepSeek Harness exited rc={returncode}",
+                )
+                print(f"\n[dsh error] {error}", flush=True)
+                self.log.agent_message(
+                    f"DeepSeek Harness error: {error}", phase="commentary"
+                )
+                self.log.turn_finished()
+
+    def serve(self) -> int:
+        events: "queue.Queue[tuple[str, str]]" = queue.Queue()
+        StdinReader(events, self.interrupt).start()
+        assembler = MessageAssembler()
+        self.banner()
+        while True:
+            try:
+                kind, payload = events.get(timeout=assembler.idle_seconds)
+            except queue.Empty:
+                message = assembler.take()
+                if message:
+                    self.run_message(message)
+                continue
+            if kind == "eof":
+                return 0
+            if kind == "interrupt":
+                self.interrupt()
+                assembler.take()
+                continue
+            if kind == "line":
+                assembler.feed(payload)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--model", required=True)
+    parser.add_argument("--effort", default=dsh_runtime.DSH_DEFAULT_REASONING_EFFORT)
+    parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--state-dir", type=Path, required=True)
+    parser.add_argument("--codex-home", type=Path, required=True)
+    parser.add_argument("--dsh-home", type=Path, required=True)
+    parser.add_argument("--dsh-bin", required=True)
+    args = parser.parse_args(argv)
+
+    set_process_comm()
+    args.state_dir.mkdir(parents=True, exist_ok=True)
+    args.state_dir.chmod(0o700)
+    args.dsh_home.mkdir(parents=True, exist_ok=True)
+    args.dsh_home.chmod(0o700)
+    try:
+        runner = DshAgentRunner(
+            model=args.model,
+            effort=args.effort,
+            repo=args.repo,
+            state_dir=args.state_dir,
+            codex_home=args.codex_home,
+            dsh_bin=args.dsh_bin,
+            dsh_home=args.dsh_home,
+        )
+    except (OSError, ValueError, dsh_runtime.DshError) as exc:
+        print(f"DeepSeek Harness unavailable: {exc}", file=sys.stderr, flush=True)
+        return 2
+    return runner.serve()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

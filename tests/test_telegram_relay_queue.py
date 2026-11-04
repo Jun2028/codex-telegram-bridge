@@ -26,6 +26,11 @@ class TelegramRelayQueueTests(unittest.TestCase):
         sender = mock.patch.object(_relay_transport, "send_reply")
         sender.start()
         self.addCleanup(sender.stop)
+        active_agent = mock.patch.object(
+            _relay_queue.agent_registry, "active_agent_for_pane", return_value=None
+        )
+        active_agent.start()
+        self.addCleanup(active_agent.stop)
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -240,6 +245,97 @@ class TelegramRelayQueueTests(unittest.TestCase):
             ["second message", "third message"],
         )
 
+    def test_queued_backlog_prevents_same_chat_steering_from_overtaking(self) -> None:
+        telegram_inbox.enqueue_telegram_relay(
+            self.queue_state,
+            self.update(11, "older queued message"),
+            self.args.target_pane,
+        )
+
+        with (
+            mock.patch.object(_relay_queue, "same_chat_can_steer", return_value=True),
+            mock.patch.object(_relay_commands, "handle_update") as handle,
+        ):
+            result = telegram_inbox.dispatch_telegram_update(
+                self.update(12, "newer steering message"),
+                self.args,
+                {},
+                "token",
+                "123",
+                self.log_path,
+            )
+
+        self.assertEqual(result, "queued")
+        handle.assert_not_called()
+        self.assertEqual(
+            [
+                task["message_id"]
+                for task in telegram_inbox.telegram_relay_queue_tasks(
+                    self.queue_state
+                )
+            ],
+            [11, 12],
+        )
+
+    def test_restart_quarantines_queue_from_previous_agent(self) -> None:
+        telegram_inbox.enqueue_telegram_relay(
+            self.queue_state,
+            self.update(15, "must stay with the old agent"),
+            self.args.target_pane,
+            now=100.0,
+            agent_id="old-agent",
+        )
+        new_agent = {"agent_id": "new-agent", "created_ts": 200}
+
+        with (
+            mock.patch.object(
+                _relay_queue.agent_registry,
+                "active_agent_for_pane",
+                return_value=new_agent,
+            ),
+            mock.patch.object(_relay_commands, "handle_update") as handle,
+        ):
+            events = telegram_inbox.drain_telegram_relay_queue(
+                self.args, {}, "token", "123", self.log_path
+            )
+
+        handle.assert_not_called()
+        self.assertEqual(events, [])
+        self.assertEqual(
+            telegram_inbox.telegram_relay_queue_tasks(self.queue_state), []
+        )
+        state = telegram_inbox.read_json_object(self.queue_state)
+        self.assertEqual(
+            [item["message_id"] for item in state["failed"]], [15]
+        )
+        self.assertIn("agent changed", state["failed"][0]["last_error"])
+
+    def test_legacy_queue_before_agent_start_is_quarantined(self) -> None:
+        telegram_inbox.enqueue_telegram_relay(
+            self.queue_state,
+            self.update(16, "queued before restart"),
+            self.args.target_pane,
+            now=100.0,
+        )
+
+        with (
+            mock.patch.object(
+                _relay_queue.agent_registry,
+                "active_agent_for_pane",
+                return_value={"agent_id": "new-agent", "created_ts": 200},
+            ),
+            mock.patch.object(_relay_commands, "handle_update") as handle,
+        ):
+            telegram_inbox.drain_telegram_relay_queue(
+                self.args, {}, "token", "123", self.log_path
+            )
+
+        handle.assert_not_called()
+        state = telegram_inbox.read_json_object(self.queue_state)
+        self.assertEqual(
+            [item["message_id"] for item in state["failed"]], [16]
+        )
+
     def test_unauthorized_chat_is_not_written_to_the_queue(self) -> None:
         self.seed_pending()
         update = self.update(13, "must not be persisted")
@@ -328,6 +424,43 @@ class TelegramRelayQueueTests(unittest.TestCase):
         self.assertEqual(len(first), 1)
         self.assertEqual(len(second), 1)
         self.assertEqual(telegram_inbox.telegram_relay_queue_tasks(self.queue_state), [])
+
+    def test_selected_quote_survives_queue_reload_and_dispatch(self) -> None:
+        update = self.update(23, "this sentence feels disjoint")
+        update["message"]["reply_to_message"] = {
+            "message_id": 22,
+            "text": "First sentence. Selected sentence. Last sentence.",
+        }
+        update["message"]["quote"] = {
+            "text": "Selected sentence.",
+            "position": 16,
+            "is_manual": True,
+        }
+        telegram_inbox.enqueue_telegram_relay(
+            self.queue_state, update, self.args.target_pane
+        )
+        relay_texts: list[str] = []
+
+        def handle_queued(queued_update, *_args, **_kwargs):
+            message = queued_update["message"]
+            relay_texts.append(telegram_inbox.format_agent_message(message, message["text"]))
+
+        with (
+            mock.patch.object(
+                _relay_submission, "codex_session_checkpoint", return_value=None
+            ),
+            mock.patch.object(_relay_commands, "handle_update", side_effect=handle_queued),
+        ):
+            telegram_inbox.drain_telegram_relay_queue(
+                self.args, {}, "token", "123", self.log_path
+            )
+
+        self.assertEqual(len(relay_texts), 1)
+        self.assertIn(
+            "\nSelected sentence.\n[/QUOTED PART OF TELEGRAM MESSAGE]",
+            relay_texts[0],
+        )
+        self.assertNotIn(update["message"]["reply_to_message"]["text"], relay_texts[0])
 
     def test_queue_waits_while_a_codex_turn_is_active(self) -> None:
         telegram_inbox.enqueue_telegram_relay(

@@ -40,9 +40,13 @@ def allowed(name: str, public_files: set[str] | None = None) -> bool:
     return (
         name in public_files
         and name not in PRIVATE_FILES
+        and "\\" not in name
         and not path.is_absolute()
         and ".." not in path.parts
-        and path.parts[0] != "private"
+        and not {"private", ".git", ".secrets", ".runtime"}.intersection(path.parts)
+        and name != "AGENTS.md"
+        and not name.endswith(".env")
+        and path.name not in {"Open demo.html", "access-key", "launch-url", "local-url.txt"}
     )
 
 
@@ -69,7 +73,8 @@ def check_public_content(name: str, data: bytes) -> None:
         data,
     ):
         raise ValueError(f"Credential-like content requires review: {name}")
-    for match in re.finditer(rb"/(?:home|Users|scratch)/(?:svu/)?([A-Za-z0-9_.-]+)", data):
+    paths = re.sub(rb"[/\\]+", b"/", data)
+    for match in re.finditer(rb"/(?:home|Users|scratch)/(?:svu/)?([A-Za-z0-9_.-]+)", paths):
         if match[1] not in {b"operator", b"user", b"test", b"example"}:
             raise ValueError(f"Personal absolute path requires review: {name}")
 

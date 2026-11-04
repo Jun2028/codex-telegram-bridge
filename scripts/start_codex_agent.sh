@@ -22,6 +22,9 @@ CODEX_REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-high}"
 if [[ "$CODEX_MODEL" == "gpt-6-astra" && -z "${TELEAGENT_CODEX_REASONING_EFFORT:-}" ]]; then
   CODEX_REASONING_EFFORT="medium"
 fi
+if tele_agent_is_dsh_model "$CODEX_MODEL" && [[ -z "${TELEAGENT_CODEX_REASONING_EFFORT:-}" ]]; then
+  CODEX_REASONING_EFFORT="max"
+fi
 if tele_agent_is_agy_model "$CODEX_MODEL"; then
   # agy picks its own default thinking level unless one is configured.
   CODEX_REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-}"
@@ -52,7 +55,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if tele_agent_is_agy_model "$CODEX_MODEL"; then
+if tele_agent_is_dsh_model "$CODEX_MODEL"; then
+  if [[ "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
+    echo "DeepSeek Harness requires full-access mode; this instance is chat-only" >&2
+    exit 2
+  fi
+  if ! command -v "${TELEAGENT_DSH_BIN:-dsh}" >/dev/null 2>&1; then
+    DSH_INSTALLED_BIN="$("$SCRIPT_DIR/install_dsh_harness.sh")"
+    export TELEAGENT_DSH_BIN="$DSH_INSTALLED_BIN"
+  fi
+elif tele_agent_is_agy_model "$CODEX_MODEL"; then
   if ! command -v "${TELEAGENT_AGY_BIN:-agy}" >/dev/null 2>&1; then
     echo "agy CLI not found on PATH (set TELEAGENT_AGY_BIN to override)" >&2
     exit 1
@@ -72,7 +84,9 @@ elif ! command -v codex >/dev/null 2>&1; then
   exit 1
 fi
 
-if tele_agent_is_deepseek_model "$CODEX_MODEL"; then
+if tele_agent_is_dsh_model "$CODEX_MODEL"; then
+  AGENT_CODEX_HOME="$TELEAGENT_DSH_HOME"
+elif tele_agent_is_deepseek_model "$CODEX_MODEL"; then
   AGENT_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
   "$SCRIPT_DIR/prepare_telegram_ds_codex_home.sh" --model "$CODEX_MODEL" >/dev/null
 else
@@ -139,21 +153,31 @@ printf -v supervisor_q '%q' "$SCRIPT_DIR/codex_agent_supervisor.sh"
 TARGET_PANE="$SESSION:$WINDOW.0"
 
 if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
+  if tele_agent_is_dsh_model "$CODEX_MODEL"; then
+    rm -f "$TELEAGENT_LOG_DIR/dsh_session.json" 2>/dev/null || true
+  fi
   DS_EXTRA=""
-  if tele_agent_is_deepseek_model "$CODEX_MODEL"; then
+  if tele_agent_is_deepseek_model "$CODEX_MODEL" || tele_agent_is_dsh_model "$CODEX_MODEL"; then
     DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"
     if [[ -z "$DS_KEY_FILE" || ! -r "$DS_KEY_FILE" ]]; then
       echo "TELEAGENT_DS_KEY_FILE must point to a readable DeepSeek key file for model $CODEX_MODEL" >&2
       exit 1
     fi
-    DS_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
-    if [[ ! -f "$DS_CODEX_HOME/config.toml" ]]; then
-      echo "DeepSeek Codex home is not prepared; run scripts/prepare_telegram_ds_codex_home.sh first" >&2
-      exit 1
-    fi
     printf -v ds_key_q '%q' "$DS_KEY_FILE"
-    printf -v ds_home_q '%q' "$DS_CODEX_HOME"
-    DS_EXTRA="source $ds_key_q && export CODEX_HOME=$ds_home_q && "
+    if tele_agent_is_dsh_model "$CODEX_MODEL"; then
+      mkdir -p "$TELEAGENT_DSH_HOME"
+      chmod 700 "$TELEAGENT_DSH_HOME"
+      printf -v dsh_home_q '%q' "$TELEAGENT_DSH_HOME"
+      DS_EXTRA="source $ds_key_q && export DSH_HOME=$dsh_home_q && "
+    else
+      DS_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
+      if [[ ! -f "$DS_CODEX_HOME/config.toml" ]]; then
+        echo "DeepSeek Codex home is not prepared; run scripts/prepare_telegram_ds_codex_home.sh first" >&2
+        exit 1
+      fi
+      printf -v ds_home_q '%q' "$DS_CODEX_HOME"
+      DS_EXTRA="source $ds_key_q && export CODEX_HOME=$ds_home_q && "
+    fi
   fi
   START_EPOCH="$(date +%s)"
   eval "$(
@@ -188,7 +212,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
         | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
         || true
     )"
-    if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy' >/dev/null; then
+    if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy|codex-dsh' >/dev/null; then
       AGENT_LAUNCH_HEALTHY=1
       break
     fi
@@ -257,8 +281,14 @@ SUPERVISOR_PID="$(
     | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
     || true
 )"
-if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy' >/dev/null; }; then
-  echo "session=$SESSION window=$WINDOW pane=0 cmd=codex supervised=yes model=$CODEX_MODEL reasoning=$CODEX_REASONING_EFFORT"
+if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy|codex-dsh' >/dev/null; }; then
+  AGENT_COMMAND="codex"
+  if tele_agent_is_dsh_model "$CODEX_MODEL"; then
+    AGENT_COMMAND="codex-dsh"
+  elif tele_agent_is_agy_model "$CODEX_MODEL"; then
+    AGENT_COMMAND="codex-agy"
+  fi
+  echo "session=$SESSION window=$WINDOW pane=0 cmd=$AGENT_COMMAND supervised=yes model=$CODEX_MODEL reasoning=$CODEX_REASONING_EFFORT"
 else
   echo "session=$SESSION window=$WINDOW pane=0 cmd=unhealthy supervised=no" >&2
   exit 1

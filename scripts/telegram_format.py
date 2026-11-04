@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
+import sys
 import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Iterable
@@ -13,6 +15,12 @@ try:
     from markdown_it import MarkdownIt
 except ImportError:  # pragma: no cover - exercised only on minimal installations
     MarkdownIt = None  # type: ignore[assignment,misc]
+    logging.getLogger(__name__).warning(
+        "Telegram rich text is disabled: markdown-it-py is missing from %s. "
+        "Install requirements.txt in this Python environment and restart only "
+        "the listener. Messages will retain literal Markdown until then.",
+        sys.executable,
+    )
 
 
 TELEGRAM_LANGUAGE_RE = re.compile(r"[A-Za-z0-9_+.-]{1,32}")

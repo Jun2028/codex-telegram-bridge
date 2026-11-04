@@ -58,7 +58,9 @@ owns a dependency rather than a global in the old monolith.
    disabled. Status never includes an assistant-history preview. Group prompts
    do not inject the private per-person memory summary.
 8. An uncertain inbound delivery is archived for review instead of blindly
-   pasted again. Accepted but unstarted ingress survives restart in FIFO order.
+   pasted again. Accepted but unstarted ingress survives restart in FIFO order,
+   but queued agent work is bound to the accepting agent; an explicit restart
+   quarantines it instead of relaying it to the replacement agent.
 9. Timed work reserves its original chat/topic and waits while the agent is busy.
    The queue never presses Escape or resumes a goal automatically.
 10. A failed control-result send retries the saved reply without repeating its
