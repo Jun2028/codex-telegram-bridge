@@ -43,8 +43,8 @@ The agent runs in one of two hosts, chosen by `teleagent/host.py`:
 
 | Host | Where | How the agent runs |
 | --- | --- | --- |
-| `tmux` | Linux or macOS with tmux | In a tmux pane under `codex_agent_supervisor.sh`; required for the Codex TUI |
-| `direct` | Anywhere else, including Windows | `teleagent/direct_pane.py` owns the runner, sends it the keystrokes tmux would, restarts it after a crash and keeps its output for `/status` |
+| `tmux` | Linux with tmux | In a tmux pane under `codex_agent_supervisor.sh`; required for the Codex TUI |
+| `direct` | Anywhere else, including Windows and macOS | `teleagent/direct_pane.py` owns the runner, sends it the keystrokes tmux would, restarts it after a crash and keeps its output for `/status` |
 
 The listener is the same in both. Its low-level questions (is an agent
 running, which harness, which session log, send these keys) go through

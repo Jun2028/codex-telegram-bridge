@@ -356,8 +356,8 @@ class DirectHostRelayTests(unittest.TestCase):
         self.run_provider("dsh")
 
 
-@unittest.skipIf(portable.WINDOWS or not shutil.which("tmux") or not shutil.which("bash"),
-                 "needs tmux and bash")
+@unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("tmux") and shutil.which("bash"),
+                     "the tmux launchers are Linux-only and need tmux and bash")
 class TmuxHostRelayTests(unittest.TestCase):
     """The same scenario on a tmux host, through the bash launcher and supervisor.
 

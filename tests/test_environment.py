@@ -61,7 +61,8 @@ class ExpansionTests(unittest.TestCase):
                 environment.build(Path(directory), shared)
 
 
-@unittest.skipIf(portable.WINDOWS or not shutil.which("bash"), "compares against the bash launcher")
+@unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("bash"),
+                     "compares against the bash launcher, which is Linux-only")
 class ShellParityTests(unittest.TestCase):
     def compare(self, instance: str, ambient: dict[str, str]) -> dict[str, str]:
         with tempfile.TemporaryDirectory() as directory:
@@ -131,7 +132,7 @@ class LauncherTests(unittest.TestCase):
                 os.environ["TELEAGENT_HOST"] = value
                 self.assertEqual(host.kind(), value)
             os.environ.pop("TELEAGENT_HOST")
-            expected = "tmux" if not portable.WINDOWS and shutil.which("tmux") else "direct"
+            expected = "tmux" if sys.platform.startswith("linux") and shutil.which("tmux") else "direct"
             self.assertEqual(host.kind(), expected)
         finally:
             if saved is None:

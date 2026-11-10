@@ -1,6 +1,6 @@
 """Where the agent runs: a tmux pane, or a process the relay manages itself.
 
-On Linux and macOS with tmux installed the agent lives in a tmux pane, which
+On Linux with tmux installed the agent lives in a tmux pane, which
 is required for the Codex TUI. Everywhere else, including Windows, the relay
 uses the *direct* host: `teleagent.direct_pane` owns the agent runner, feeds it
 the same keystrokes tmux would, and records what tmux and `/proc` would have
@@ -44,7 +44,8 @@ def kind() -> str:
     configured = os.environ.get("TELEAGENT_HOST", "").strip().lower()
     if configured in {TMUX, DIRECT}:
         return configured
-    return TMUX if not portable.WINDOWS and shutil.which("tmux") else DIRECT
+    # The tmux launchers are Linux shell scripts; macOS and Windows use the direct host.
+    return TMUX if sys.platform.startswith("linux") and shutil.which("tmux") else DIRECT
 
 
 def is_direct() -> bool:
