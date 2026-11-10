@@ -6,7 +6,6 @@ concurrent readers from partial writes; JSON remains inspectable by operators.
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 import tempfile
@@ -16,6 +15,8 @@ from functools import wraps
 from pathlib import Path
 from typing import Any
 from notify import assert_safe_local_path
+
+from . import portable
 
 _locks_guard = threading.Lock()
 _locks: dict[str, threading.RLock] = {}
@@ -35,7 +36,7 @@ def locked(path: Path):
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(path) + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            portable.lock_file(fd)
             _held.paths = held | {key}
             yield
         finally:
@@ -83,11 +84,7 @@ def atomic_write(path: Path, text: str) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(directory_fd)
-        finally:
-            os.close(directory_fd)
+        portable.sync_directory(path.parent)
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)

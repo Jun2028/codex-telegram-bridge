@@ -58,6 +58,7 @@ scripts/manual_codex_usage_reset.sh
 scripts/notify.py
 scripts/prepare_telegram_codex_home.sh
 scripts/prepare_telegram_ds_codex_home.sh
+scripts/relay.py
 scripts/relay_paths.sh
 scripts/render_chat_only_codex_config.py
 scripts/setup_telegram_notify.py
@@ -73,13 +74,17 @@ scripts/teleagent/attachments.py
 scripts/teleagent/auth.py
 scripts/teleagent/commands.py
 scripts/teleagent/delivery.py
+scripts/teleagent/direct_pane.py
 scripts/teleagent/dsh.py
+scripts/teleagent/environment.py
 scripts/teleagent/events.py
 scripts/teleagent/harnesses.py
+scripts/teleagent/host.py
 scripts/teleagent/identity.py
 scripts/teleagent/lifecycle.py
 scripts/teleagent/messages.py
 scripts/teleagent/models.py
+scripts/teleagent/portable.py
 scripts/teleagent/processes.py
 scripts/teleagent/provider_commands.py
 scripts/teleagent/queue.py
@@ -108,6 +113,8 @@ tests/test_claude_harness.py
 tests/test_claude_controls.py
 tests/test_claude_accounts.py
 tests/test_harness_registry.py
+tests/test_direct_host.py
+tests/test_environment.py
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
 tests/test_codex_reset_api.py

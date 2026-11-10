@@ -37,6 +37,32 @@ owns a dependency rather than a global in the old monolith.
 | `attachments`, `messages`, `identity`, `schedule` | Downloads, message formatting, scoped replay and timed work |
 | `state`, `transport`, `settings` | Atomic private JSON, locks, Telegram API and configuration |
 
+## Hosts
+
+The agent runs in one of two hosts, chosen by `teleagent/host.py`:
+
+| Host | Where | How the agent runs |
+| --- | --- | --- |
+| `tmux` | Linux or macOS with tmux | In a tmux pane under `codex_agent_supervisor.sh`; required for the Codex TUI |
+| `direct` | Anywhere else, including Windows | `teleagent/direct_pane.py` owns the runner, sends it the keystrokes tmux would, restarts it after a crash and keeps its output for `/status` |
+
+The listener is the same in both. Its low-level questions (is an agent
+running, which harness, which session log, send these keys) go through
+`processes.py` and `telegram_agent_registry.py`, which ask tmux and `/proc` on
+a tmux host and the direct pane's own record on a direct host.
+`teleagent/portable.py` holds the remaining operating-system differences: file
+locks, process checks and stopping a process tree.
+
+`scripts/relay.py` starts, stops and supervises the listener without bash.
+`teleagent/environment.py` computes the settings `relay_paths.sh` exports;
+`tests/test_environment.py` compares the two. `tests/test_direct_host.py` runs
+the listener against a direct-host agent and avoids every Unix-only call, so CI
+runs it on Windows and macOS as well.
+
+The direct host runs Claude Code. To add another harness there, give it a
+runner that reads its input from standard input and extend
+`lifecycle.direct_runner_command`.
+
 ## Harnesses and commands
 
 A harness is the program in the agent pane: the Codex TUI, or a runner that

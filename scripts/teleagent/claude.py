@@ -72,8 +72,11 @@ USAGE_PROBE_PROMPT = "Reply with OK."
 def _format_reset(value: object) -> str:
     if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
         return ""
-    # The listener's own time zone, so the same code reads correctly on any host.
-    return time.strftime(", resets %a %d %b %H:%M %Z", time.localtime(value)).rstrip()
+    # The listener's own time zone, written as an offset: zone names differ by OS.
+    local = time.localtime(value)
+    offset = time.strftime("%z", local)
+    zone = f" UTC{offset[:3]}:{offset[3:]}" if len(offset) == 5 else ""
+    return time.strftime(", resets %a %d %b %H:%M", local) + zone
 
 
 def _format_window(name: str, window: dict) -> str:

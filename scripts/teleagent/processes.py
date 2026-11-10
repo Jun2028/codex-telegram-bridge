@@ -14,11 +14,30 @@ from pathlib import Path
 import telegram_agent_registry as agent_registry  # noqa: E402
 
 from . import harnesses as _harnesses
+from . import host as _host
 from . import settings as _settings
 from . import submission as _submission
 
 
+def _process_comm(pid: int) -> str:
+    """The process name of a pid; raises OSError when it is gone."""
+    if _host.is_direct():
+        return _host.process_comm(pid)
+    return Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+
+
+def _process_start(pid: int) -> str:
+    """A start marker that differs when a pid is reused; raises OSError or IndexError."""
+    if _host.is_direct():
+        return _host.process_start(pid)
+    # Field 22 of /proc/PID/stat is the process start time in clock ticks.
+    stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+    return stat_text[stat_text.rfind(")") + 2 :].split()[19]
+
+
 def restore_tmux_socket_from_env() -> bool:
+    if _host.is_direct():
+        return False
     tmux_env = os.environ.get("TMUX", "")
     parts = tmux_env.split(",")
     if len(parts) < 2 or not parts[0] or not parts[1]:
@@ -50,10 +69,16 @@ def tmux_value(target_pane: str, expression: str) -> str:
 
 
 def tmux_pane_command(target_pane: str) -> str:
+    if _host.is_direct():
+        found = _host.record(target_pane)
+        return str(found.get("process_comm") or "") if found else ""
     return tmux_value(target_pane, "#{pane_current_command}").strip()
 
 
 def tmux_pane_has_codex_supervisor(target_pane: str) -> bool:
+    if _host.is_direct():
+        # The direct pane supervises its runner itself.
+        return _host.record(target_pane) is not None
     root_pid = agent_registry.tmux_pane_pid(target_pane)
     if root_pid is None:
         return False
@@ -72,9 +97,7 @@ def tmux_pane_has_codex_process(target_pane: str) -> bool:
     if root_pid is not None:
         for pid in agent_registry.descendants(root_pid):
             try:
-                command_name = (
-                    Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
-                )
+                command_name = _process_comm(pid)
             except OSError:
                 continue
             if command_name in _settings.CODEX_COMMANDS:
@@ -89,9 +112,7 @@ def tmux_pane_harness(target_pane: str) -> _harnesses.Harness | None:
         return None
     for pid in agent_registry.descendants(root_pid):
         try:
-            command_name = (
-                Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
-            )
+            command_name = _process_comm(pid)
         except OSError:
             continue
         harness = _harnesses.for_process_comm(command_name)
@@ -127,15 +148,12 @@ def codex_process_identity(target_pane: str) -> str | None:
     identities: list[tuple[int, str]] = []
     for pid in agent_registry.descendants(root_pid):
         try:
-            command_name = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+            command_name = _process_comm(pid)
             if command_name not in _settings.CODEX_COMMANDS:
                 continue
-            # Field 22 of /proc/PID/stat is the process start time in clock
-            # ticks.  Pairing it with the PID prevents a recycled PID from
-            # looking like the process that accepted an earlier relay.
-            stat_text = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-            stat_fields = stat_text[stat_text.rfind(")") + 2 :].split()
-            start_ticks = stat_fields[19]
+            # Pairing the start marker with the PID prevents a recycled PID
+            # from looking like the process that accepted an earlier relay.
+            start_ticks = _process_start(pid)
         except (IndexError, OSError):
             continue
         identities.append((pid, start_ticks))
@@ -146,7 +164,7 @@ def codex_process_identity(target_pane: str) -> str | None:
 
 def process_has_codex_session(pid: int, session_path: Path) -> bool:
     try:
-        command_name = Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
+        command_name = _process_comm(pid)
     except OSError:
         return False
     if command_name not in _settings.CODEX_COMMANDS:
@@ -213,6 +231,8 @@ def wait_for_supervised_codex(target_pane: str, timeout: float) -> bool:
 
 
 def tmux_target_exists(target_pane: str) -> bool:
+    if _host.is_direct():
+        return _host.record(target_pane) is not None
     restore_tmux_socket_from_env()
     completed = subprocess.run(
         ["tmux", "display-message", "-p", "-t", target_pane, "#{pane_id}"],
@@ -225,6 +245,8 @@ def tmux_target_exists(target_pane: str) -> bool:
 
 
 def tmux_window_exists(session: str, window: str) -> bool:
+    if _host.is_direct():
+        return _host.record(f"{session}:{window}.0") is not None
     restore_tmux_socket_from_env()
     completed = subprocess.run(
         ["tmux", "list-windows", "-t", session, "-F", "#{window_name}"],
@@ -239,6 +261,8 @@ def tmux_window_exists(session: str, window: str) -> bool:
 
 
 def ensure_tmux_session(repo_root: Path, session: str) -> None:
+    if _host.is_direct():
+        return
     restore_tmux_socket_from_env()
     if (
         subprocess.run(["tmux", "has-session", "-t", session], check=False).returncode
@@ -315,6 +339,8 @@ def tmux_bash_shell_command() -> str:
 
 
 def tmux_tail(target_pane: str, lines: int = 80) -> str:
+    if _host.is_direct():
+        return _host.tail(target_pane, lines)
     return _notify.run_short(
         ["tmux", "capture-pane", "-pt", target_pane, "-S", f"-{lines}"], timeout=8
     )
@@ -374,6 +400,9 @@ def tmux_send_keys(target_pane: str, *keys: str, literal: bool = False) -> None:
         and _submission.codex_model_switch_prompt_visible(target_pane)
     ):
         raise subprocess.SubprocessError("automatic model-switch selection blocked")
+    if _host.is_direct():
+        _host.send_keys(target_pane, *keys, literal=literal)
+        return
     command = ["tmux", "send-keys", "-t", target_pane]
     if literal:
         command.append("-l")

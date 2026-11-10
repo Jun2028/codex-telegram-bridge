@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 import telegram_agent_registry as agent_registry  # noqa: E402
 
+from . import host as _host
 from . import settings as _settings
 from . import processes as _processes
 from . import sessions as _sessions
@@ -295,7 +296,7 @@ def pending_codex_submission_pane_location(item: dict[str, Any]) -> str:
             target_pane
         ) or not _processes.tmux_pane_has_codex_process(target_pane):
             return "absent"
-        pane_text = _notify.run_short(
+        pane_text = _host.tail(target_pane, 400) if _host.is_direct() else _notify.run_short(
             # A long Telegram reply can push the beginning of the active
             # multiline composer above the visible pane.  Search scrollback as
             # well; otherwise its marker looks absent and recovery never sends
@@ -394,7 +395,22 @@ def cancel_pending_codex_submissions(
     return cancelled
 
 
+def _send_key(target_pane: str, key: str) -> None:
+    """Press one key in the agent's composer."""
+    if _host.is_direct():
+        _host.send_keys(target_pane, key)
+        return
+    subprocess.run(
+        ["tmux", "send-keys", "-t", target_pane, key],
+        check=True,
+        timeout=_settings.TMUX_MUTATION_TIMEOUT_SECONDS,
+    )
+
+
 def tmux_paste_text_atomic(target_pane: str, text: str) -> None:
+    if _host.is_direct():
+        _host.paste(target_pane, text)
+        return
     """Paste one payload through a private bracketed tmux buffer."""
     buffer_name = f"tele-agent-telegram-{os.getpid()}-{time.time_ns()}"
     subprocess.run(
@@ -981,11 +997,7 @@ def paste_to_tmux(
 
     # Clear any stale text in the Codex input line before injecting the Telegram
     # message. Without this, an unsent prompt can be concatenated with the relay.
-    subprocess.run(
-        ["tmux", "send-keys", "-t", target_pane, "C-u"],
-        check=True,
-        timeout=_settings.TMUX_MUTATION_TIMEOUT_SECONDS,
-    )
+    _send_key(target_pane, "C-u")
     tmux_paste_text_atomic(target_pane, text)
     if press_enter:
         # Codex TUI treats very fast text+Enter injection as a paste/edit event.
@@ -1003,11 +1015,7 @@ def paste_to_tmux(
                     process_identity=submitting_process_identity,
                 )
             return "not relayed: Codex model-switch prompt is open; automatic selection blocked"
-        subprocess.run(
-            ["tmux", "send-keys", "-t", target_pane, "Enter"],
-            check=True,
-            timeout=_settings.TMUX_MUTATION_TIMEOUT_SECONDS,
-        )
+        _send_key(target_pane, "Enter")
         confirmed = True
         pending_checkpoint = checkpoint
         if bootstrap_session and marker is not None:
@@ -1032,11 +1040,7 @@ def paste_to_tmux(
             # the first Enter actually submitted and JSONL persistence is only
             # delayed, Enter on the empty/busy composer is a no-op; the marker
             # check still prevents a duplicate relay payload.
-            subprocess.run(
-                ["tmux", "send-keys", "-t", target_pane, "Enter"],
-                check=True,
-                timeout=_settings.TMUX_MUTATION_TIMEOUT_SECONDS,
-            )
+            _send_key(target_pane, "Enter")
             if bootstrap_session:
                 confirmed, pending_checkpoint = wait_for_codex_bootstrap_submission(
                     target_pane,

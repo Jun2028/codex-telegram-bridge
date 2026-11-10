@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import notify as _notify
-import fcntl
 import json
 import os
 import socket
@@ -26,6 +25,7 @@ from . import delivery as _delivery
 from . import identity as _identity
 from . import lifecycle as _lifecycle
 from . import models as _models
+from . import portable as _portable
 from . import processes as _processes
 from . import queue as _queue
 from . import schedule as _schedule
@@ -409,10 +409,8 @@ def main() -> int:
     # One poller for each bot runtime, even if two launchers race.
     listener_lock = offset_path.with_name("telegram_listener.lock").open("a")
     os.chmod(listener_lock.name, 0o600)
-    try:
-        fcntl.flock(listener_lock.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        raise SystemExit("A listener already owns this bot runtime.") from None
+    if not _portable.lock_file(listener_lock.fileno(), blocking=False):
+        raise SystemExit("A listener already owns this bot runtime.")
     offset = _state.read_offset(offset_path)
     active_meta = agent_registry.active_agent_for_pane(args.target_pane)
     if active_meta:

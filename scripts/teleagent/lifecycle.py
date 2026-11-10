@@ -4,10 +4,10 @@ from __future__ import annotations
 
 
 import argparse
-import fcntl
 import os
 import shlex
 import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,8 @@ from . import agy as _agy
 from . import dsh as _dsh
 from . import claude as _claude
 from . import harnesses as _harnesses
+from . import host as _host
+from . import portable as _portable
 
 
 def agent_lifecycle_state_path(args: argparse.Namespace) -> Path | None:
@@ -75,11 +77,9 @@ def agent_lifecycle_operation_in_progress(args: argparse.Namespace) -> bool:
     lock_path.parent.mkdir(parents=True, exist_ok=True)
     descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
     try:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
+        if not _portable.lock_file(descriptor, blocking=False):
             return True
-        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        _portable.unlock_file(descriptor)
         return False
     finally:
         os.close(descriptor)
@@ -110,6 +110,93 @@ def build_codex_agent_command(
 
 class AgentStartUnconfirmed(RuntimeError):
     """The launcher ran, but a live Codex process was not observed."""
+
+
+def direct_runner_command(
+    repo_root: Path, model: str, reasoning_effort: str, agent_binary: str, codex_home: Path
+) -> tuple[list[str], dict[str, str]]:
+    """The runner a direct host starts, as codex_agent_supervisor.sh starts it in tmux."""
+    harness = _harnesses.for_model(model)
+    if harness is not _harnesses.CLAUDE:
+        # The Codex TUI needs a terminal, and the DeepSeek Harness and
+        # Antigravity launch steps still live in the bash supervisor.
+        raise RuntimeError(
+            f"{harness.label} needs a tmux host on this machine; "
+            "without tmux, use /switch claude"
+        )
+    agent_repo = os.environ.get("TELEAGENT_REPO") or str(repo_root)
+    command = [
+        sys.executable, str(repo_root / "scripts" / "claude_agent_runner.py"),
+        "--model", model, "--effort", reasoning_effort or "high",
+        "--repo", agent_repo,
+        "--state-dir", str(agent_registry.telegram_log_dir()),
+        "--codex-home", str(codex_home),
+    ]
+    return command, {harness.launch_binary_env: agent_binary}
+
+
+def _start_direct_agent(
+    repo_root: Path,
+    session: str,
+    window: str,
+    restart: bool,
+    model: str,
+    reasoning_effort: str,
+    agent_binary: str,
+    agent_codex_home: Path,
+) -> tuple[str, str, dict[str, Any] | None]:
+    """Start the agent as a process the relay manages, for hosts without tmux."""
+    target_pane = f"{session}:{window}.0"
+    harness = _harnesses.for_model(model)
+    command, env = direct_runner_command(
+        repo_root, model, reasoning_effort, agent_binary, agent_codex_home
+    )
+    if _host.record(target_pane) is not None:
+        if not restart:
+            meta = agent_registry.adopt_existing_agent(
+                repo_root=repo_root,
+                session=session,
+                window=window,
+                target_pane=target_pane,
+                launch_source="telegram-start-agent-reuse",
+                codex_home=agent_codex_home,
+            )
+            agent_registry.append_agent_event(meta, {"event": "agent_reused_by_start_agent"})
+            return (
+                target_pane,
+                f"Supervised agent already appears to be running in {target_pane}.",
+                meta,
+            )
+        _host.stop(target_pane)
+        _settings.REGISTERED_CODEX_PID_CACHE.clear()
+    # An explicit launch is a fresh conversation; crash restarts keep the session.
+    (agent_registry.telegram_log_dir() / "claude_session.json").unlink(missing_ok=True)
+    start_epoch = time.time()
+    meta = agent_registry.create_agent(
+        repo_root=repo_root,
+        session=session,
+        window=window,
+        target_pane=target_pane,
+        launch_source="telegram-restart-agent" if restart else "telegram-start-agent",
+        start_epoch=start_epoch,
+        codex_home=agent_codex_home,
+    )
+    env.update(agent_registry.agent_env(meta))
+    _host.start(
+        target_pane, command, cwd=repo_root, env=env, process_comm=harness.process_comm
+    )
+    for _ in range(40):
+        if _processes.tmux_pane_has_codex_process(target_pane):
+            break
+        time.sleep(0.25)
+    else:
+        raise AgentStartUnconfirmed(
+            "Agent startup was not confirmed: no agent process was observed within 10 seconds. Check /status before retrying."
+        )
+    meta = agent_registry.refresh_codex_session_link(
+        meta, target_pane=target_pane, start_epoch=start_epoch
+    )
+    return target_pane, f"Started {harness.label} in {target_pane}.", meta
 
 
 def start_codex_agent(
@@ -143,6 +230,11 @@ def start_codex_agent(
     else:
         agent_binary = _processes.codex_executable()
     agent_codex_home = _processes.codex_home_for_model(model)
+    if _host.is_direct():
+        return _start_direct_agent(
+            repo_root, session, window, restart, model, reasoning_effort,
+            agent_binary, agent_codex_home,
+        )
     shell_command = _processes.tmux_bash_shell_command()
 
     if _dsh.is_dsh_model(model) or _claude.is_claude_model(model):
@@ -306,6 +398,7 @@ def stop_codex_agent(
             f"{current_command or 'an unknown non-Codex process'}"
         )
 
+    running = _processes.tmux_pane_harness(target_pane) or _harnesses.CODEX
     meta = agent_registry.active_agent_for_pane(target_pane)
     if meta:
         agent_registry.append_agent_event(
@@ -315,13 +408,16 @@ def stop_codex_agent(
                 "target_pane": target_pane,
             },
         )
-    subprocess.run(
-        ["tmux", "kill-window", "-t", f"{session}:{window}"],
-        check=True,
-        timeout=_settings.TMUX_MUTATION_TIMEOUT_SECONDS,
-    )
+    if _host.is_direct():
+        _host.stop(target_pane)
+    else:
+        subprocess.run(
+            ["tmux", "kill-window", "-t", f"{session}:{window}"],
+            check=True,
+            timeout=_settings.TMUX_MUTATION_TIMEOUT_SECONDS,
+        )
     _settings.REGISTERED_CODEX_PID_CACHE.clear()
-    return f"Stopped the Codex agent in {target_pane}.", meta
+    return f"Stopped the {running.label} agent in {target_pane}.", meta
 
 
 def ensure_codex_target_for_agent_message(

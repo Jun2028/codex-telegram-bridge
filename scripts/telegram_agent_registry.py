@@ -105,6 +105,7 @@ def read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
+from teleagent import host as agent_host  # noqa: E402
 from teleagent.harnesses import PROCESS_COMMANDS as CODEX_PROCESS_COMMANDS  # noqa: E402
 
 
@@ -357,6 +358,8 @@ def create_agent(
 
 
 def ps_rows() -> list[tuple[int, int, str]]:
+    if agent_host.is_direct():
+        return agent_host.process_rows()
     output = run_short(["ps", "-eo", "pid=,ppid=,comm="], timeout=5)
     rows: list[tuple[int, int, str]] = []
     for line in output.splitlines():
@@ -417,6 +420,9 @@ def closest_codex_pids(
 
 
 def tmux_pane_pid(target_pane: str) -> int | None:
+    if agent_host.is_direct():
+        found = agent_host.record(target_pane)
+        return found["pane_pid"] if found else None
     text = run_short(["tmux", "display-message", "-p", "-t", target_pane, "#{pane_pid}"], timeout=5)
     try:
         return int(text.strip())
@@ -425,6 +431,8 @@ def tmux_pane_pid(target_pane: str) -> int | None:
 
 
 def session_files_open_by_pid(pid: int) -> list[Path]:
+    if agent_host.is_direct():
+        return agent_host.session_files(pid)
     fd_dir = Path(f"/proc/{pid}/fd")
     try:
         fds = list(fd_dir.iterdir())
@@ -863,8 +871,9 @@ def adopt_existing_agent(
     return refresh_codex_session_link(meta, target_pane=target_pane)
 
 
-def shell_env_prefix(meta: dict[str, Any]) -> str:
-    env = {
+def agent_env(meta: dict[str, Any]) -> dict[str, str]:
+    """The environment that binds a launched agent to its registry record."""
+    return {
         "TELEAGENT_PRESERVE_AGENT_BINDING": "1",
         "TELEAGENT_AGENT_ID": str(meta["agent_id"]),
         "TELEAGENT_AGENT_JSONL": str(meta["agent_jsonl"]),
@@ -873,7 +882,10 @@ def shell_env_prefix(meta: dict[str, Any]) -> str:
         "TELEAGENT_AGENT_TARGET_PANE": str(meta["target_pane"]),
         "TELEAGENT_LOG_DIR": str(telegram_log_dir()),
     }
-    return " ".join(f"{key}={shlex.quote(value)}" for key, value in env.items())
+
+
+def shell_env_prefix(meta: dict[str, Any]) -> str:
+    return " ".join(f"{key}={shlex.quote(value)}" for key, value in agent_env(meta).items())
 
 
 def print_shell_exports(meta: dict[str, Any]) -> None:

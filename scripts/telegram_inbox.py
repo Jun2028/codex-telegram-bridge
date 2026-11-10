@@ -3,7 +3,6 @@
 
 
 import argparse
-import fcntl
 import hashlib
 import json
 import math

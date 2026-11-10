@@ -17,3 +17,20 @@ jobs:
       - run: python -m pip install -r requirements.txt
       - run: scripts/check.sh
       - run: node --test examples/telegram-file-browser/test.cjs
+  # The tmux-free host must keep working where there is no bash, tmux or /proc.
+  portable:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r requirements.txt
+      - run: python -m unittest tests.test_direct_host tests.test_environment -v
+        env:
+          TELEAGENT_HOST: direct
+          PYTHONUTF8: '1'

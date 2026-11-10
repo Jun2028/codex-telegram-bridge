@@ -118,6 +118,29 @@ Sol, Luna, Spark, DeepSeek Flash and DeepSeek Pro. `ds-flash` and `ds-pro` keep
 using the existing Codex harness with the DeepSeek provider. `/dsh [flash|pro]`
 starts the official native DeepSeek Harness instead and begins a fresh session.
 
+## Run without tmux: Windows, macOS or any host
+
+The relay also runs where bash and tmux are unavailable. It then starts and
+supervises the agent process itself instead of placing it in a tmux pane.
+
+```bash
+python scripts/relay.py start    # listener in the background
+python scripts/relay.py status
+python scripts/relay.py stop     # listener and agent
+python scripts/relay.py run      # listener in this terminal
+```
+
+It needs Python 3.11 or newer with `requirements.txt` installed, the same
+`config/relay.env` and secret file as any other host, and a signed-in `claude`
+CLI. This mode runs Claude Code: set `TELEAGENT_CODEX_MODEL="cc-sonnet"` in
+`config/relay.env` so the default agent is Claude. The Codex TUI, DeepSeek
+Harness and Antigravity need a tmux host. Claude sign-in from Telegram
+(`/auth claude login`) also needs a Unix host; sign in with the CLI instead.
+
+A host with tmux uses it by default; `TELEAGENT_HOST=direct` or
+`TELEAGENT_HOST=tmux` chooses explicitly. Tested on Linux and Windows; the same
+tests run on macOS in CI. See [architecture](docs/architecture.md).
+
 ## Private host configuration
 
 Copy `config/relay.env.template` to ignored `config/relay.env` for local options.

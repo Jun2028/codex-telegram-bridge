@@ -7,17 +7,54 @@ import argparse
 import json
 import os
 import queue
-import select
 import signal
 import subprocess
 import tempfile
-import termios
 import threading
 from pathlib import Path
+
+try:
+    import termios
+except ImportError:  # Windows: input arrives on a pipe, never a Unix terminal.
+    termios = None
 
 from dsh_agent_runner import SessionLog, set_process_comm
 from notify import redact
 from teleagent import claude
+
+
+class StdinBytes:
+    """Standard input one byte at a time, with a timed read that works on any OS.
+
+    `select` cannot wait on a pipe on Windows, so a thread does the blocking
+    reads and the caller waits on a queue.
+    """
+
+    def __init__(self) -> None:
+        self.bytes: queue.Queue = queue.Queue()
+        if os.name == "nt":
+            import msvcrt
+
+            # Text mode would rewrite line endings and end input at Ctrl-Z.
+            msvcrt.setmode(0, os.O_BINARY)
+        threading.Thread(target=self._pump, daemon=True).start()
+
+    def _pump(self) -> None:
+        while True:
+            try:
+                char = os.read(0, 1)
+            except OSError:
+                char = b""
+            self.bytes.put(char)
+            if not char:
+                return
+
+    def read(self, timeout: float | None = None) -> bytes | None:
+        """Return one byte, b"" at end of input, or None when the wait timed out."""
+        try:
+            return self.bytes.get(timeout=timeout)
+        except queue.Empty:
+            return None
 
 
 def read_stdin(events: queue.Queue, interrupt) -> None:
@@ -25,11 +62,9 @@ def read_stdin(events: queue.Queue, interrupt) -> None:
     pending = bytearray()
     pasting = False
     paste_start, paste_end = b"\x1b[200~", b"\x1b[201~"
+    source = StdinBytes()
     while True:
-        try:
-            char = os.read(0, 1)
-        except OSError:
-            char = b""
+        char = source.read()
         if not char or char == b"\x04":
             events.put(("eof", ""))
             return
@@ -42,9 +77,7 @@ def read_stdin(events: queue.Queue, interrupt) -> None:
         if char == b"\x1b":
             sequence = bytearray(char)
             while paste_start.startswith(sequence) and len(sequence) < len(paste_start):
-                if not select.select([0], [], [], .05)[0]:
-                    break
-                following = os.read(0, 1)
+                following = source.read(timeout=.05)
                 if not following:
                     break
                 sequence.extend(following)
@@ -56,7 +89,7 @@ def read_stdin(events: queue.Queue, interrupt) -> None:
             events.put(("interrupt", ""))
         elif char == b"\x15":  # The relay clears the composer with Ctrl-U.
             pending.clear()
-        elif char == b"\n":
+        elif char in (b"\n", b"\r"):
             if pending:
                 events.put(("message", pending.decode("utf-8", errors="replace")))
             pending.clear()
@@ -88,7 +121,9 @@ class ClaudeAgentRunner:
         files.append(Path(personality) if personality else
                      next((repo / "config" / name for name in ["personality.md", "personality.default.md"]
                            if (repo / "config" / name).is_file()), repo / "config/personality.default.md"))
-        self.instructions.write_text("\n\n".join(p.read_text() for p in files if p.is_file()))
+        self.instructions.write_text(
+            "\n\n".join(p.read_text(encoding="utf-8") for p in files if p.is_file()),
+            encoding="utf-8", newline="")
         self.instructions.chmod(0o600)
         self.log = SessionLog(codex_home, repo, harness="claude")
         self.log.turn_context(claude.native_model(model), effort)
@@ -128,12 +163,14 @@ class ClaudeAgentRunner:
                                             self.instructions, self.session_id)
         result = None
         try:
-            with tempfile.TemporaryFile(mode="w+") as prompt, tempfile.TemporaryFile(mode="w+") as errors:
+            with tempfile.TemporaryFile(mode="w+", encoding="utf-8", newline="") as prompt, \
+                 tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errors:
                 prompt.write(message)
                 prompt.seek(0)
                 with self.lock:
                     self.process = subprocess.Popen(command, stdin=prompt, stdout=subprocess.PIPE,
-                                                    stderr=errors, text=True, cwd=self.repo)
+                                                    stderr=errors, text=True, encoding="utf-8",
+                                                    errors="replace", cwd=self.repo)
                 try:
                     assert self.process.stdout is not None
                     for line in self.process.stdout:
@@ -193,7 +230,7 @@ class ClaudeAgentRunner:
     def serve(self) -> int:
         events: queue.Queue = queue.Queue()
         previous_terminal = None
-        if os.isatty(0):
+        if termios is not None and os.isatty(0):
             previous_terminal = termios.tcgetattr(0)
             mode = termios.tcgetattr(0)
             mode[3] &= ~(termios.ICANON | termios.ECHO)

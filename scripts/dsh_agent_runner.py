@@ -26,6 +26,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 from teleagent import dsh as dsh_runtime  # noqa: E402
+from teleagent import host as agent_host  # noqa: E402
 
 
 PROCESS_COMM = "codex-dsh"
@@ -61,6 +62,8 @@ class SessionLog:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
         self.path = sessions_dir / f"rollout-{harness}-{stamp}-{uuid.uuid4()}.jsonl"
         self._handle = self.path.open("a", encoding="utf-8")
+        # Hosts without /proc learn the open session log from the runner itself.
+        agent_host.announce_session(self.path)
         self.write(
             {
                 "type": "session_meta",
