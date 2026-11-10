@@ -359,6 +359,32 @@ class TelegramAuthRecoveryTests(unittest.TestCase):
         self.assertNotIn("https://auth.openai.com", detail)
         self.assertIn("device auth timed out", detail)
 
+    def test_claude_login_code_is_consumed_before_durable_ingress(self) -> None:
+        code = "c" * 32 + "#" + "s" * 32
+        update = {"update_id": 77, "message": {"message_id": 77,
+            "chat": {"id": "123", "type": "private"}, "from": {"id": "123"},
+            "text": "/claude_code " + code}}
+        with (
+            mock.patch.object(sys, "argv", self._main_argv()),
+            mock.patch.object(telegram_inbox, "assert_safe_local_path"),
+            mock.patch.object(_relay_notify, "load_env", return_value={
+                "TELEAGENT_BOT_TOKEN": "token", "TELEAGENT_CHAT_ID": "123",
+                "TELEAGENT_BOT_USERNAME": "OurBot"}),
+            mock.patch.object(_relay_app, "get_updates", return_value=[update]),
+            mock.patch.object(_relay_app._service.Inbox, "accept") as accept,
+            mock.patch.object(_relay_processes, "codex_target_ready", return_value=False),
+            mock.patch.object(telegram_inbox.agent_registry, "active_agent_for_pane", return_value=self.meta),
+            mock.patch.object(telegram_inbox.agent_registry, "refresh_codex_session_link", return_value=self.meta),
+            mock.patch.object(_relay_sessions, "valid_codex_session_for_agent", return_value=True),
+            mock.patch.object(_relay_transport, "send_reply"),
+        ):
+            self.assertEqual(telegram_inbox.main(), 0)
+        accept.assert_not_called()
+        self.assertNotIn(code, json.dumps(update))
+        for path in self.root.rglob("*"):
+            if path.is_file():
+                self.assertNotIn(code.encode(), path.read_bytes(), str(path))
+
     def test_listener_proactively_reports_structured_auth_failure_once(self) -> None:
         self._write_records(self._auth_error())
         with (

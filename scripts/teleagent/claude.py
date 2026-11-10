@@ -7,6 +7,7 @@ import json
 import shlex
 import shutil
 import subprocess
+import tempfile
 from pathlib import Path
 
 MODELS = {"cc-sonnet": "sonnet", "cc-opus": "opus", "cc-haiku": "haiku"}
@@ -35,17 +36,46 @@ def parse_launch_payload(payload: str) -> tuple[str, str]:
     return model, effort
 
 
+def binary() -> str:
+    executable = shutil.which(os.environ.get("TELEAGENT_CLAUDE_BIN", "claude"))
+    if not executable:
+        raise RuntimeError("Claude Code CLI is not installed on this machine")
+    return executable
+
+
 def ensure_available() -> str:
     if os.environ.get("TELEAGENT_CODEX_ACCESS_MODE", "full-access") != "full-access":
         raise RuntimeError("Claude Code requires full-access mode; this instance is chat-only")
-    binary = shutil.which(os.environ.get("TELEAGENT_CLAUDE_BIN", "claude"))
-    if not binary:
-        raise RuntimeError("Claude Code CLI not installed (TELEAGENT_CLAUDE_BIN may select it)")
+    executable = binary()
     # Preflight before replacing a running agent. Never forward auth output.
-    result = subprocess.run([binary, "auth", "status"], capture_output=True, timeout=20)
+    result = subprocess.run([executable, "auth", "status"], capture_output=True, timeout=20)
     if result.returncode:
         raise RuntimeError("Claude Code is not signed in on this machine")
-    return binary
+    return executable
+
+
+def logout() -> str:
+    result = subprocess.run([binary(), "auth", "logout"], capture_output=True, timeout=20)
+    if result.returncode:
+        raise RuntimeError("Claude sign-out failed; account state was not confirmed")
+    return "Claude Code signed out on this machine."
+
+
+def usage() -> str:
+    # Ask Claude's builtin command in an empty directory without tools/history.
+    with tempfile.TemporaryDirectory(prefix="claude-usage-") as directory:
+        result = subprocess.run([binary(), "--print", "--output-format", "json",
+            "--model", "sonnet", "--effort", "low", "--tools", "",
+            "--no-session-persistence"], input="/usage", text=True,
+            capture_output=True, cwd=directory, timeout=60)
+    try:
+        data = json.loads(result.stdout)
+        report = data.get("result")
+        if result.returncode or data.get("is_error") or not isinstance(report, str) or not report.strip():
+            raise ValueError()
+    except (ValueError, AttributeError):
+        raise RuntimeError("Claude's live usage query failed; no cached value was substituted") from None
+    return report.strip()[:6000]
 
 
 def main() -> int:

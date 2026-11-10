@@ -290,6 +290,9 @@ def dispatch_telegram_update(
     route_state_path: Path | None = None,
 ) -> str:
     """Handle one update or persist a normal message behind an unsafe composer."""
+    from . import claude_auth
+    if claude_auth.consume_code_update(update, args, token, allowed_chat_id, owner_user_id):
+        return "handled"
     queue_path = relay_queue_state_path(args)
     confirmation_text = getattr(args, "relay_confirmation_state_path", None)
     confirmation_path = Path(confirmation_text) if confirmation_text else None

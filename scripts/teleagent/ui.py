@@ -22,6 +22,8 @@ MENU = [
     ("interrupt", "Stop the current turn and submit a new instruction"),
     ("dsh", "Switch to the native DeepSeek Harness"),
     ("claude", "Switch to native Claude Code"),
+    ("claude_auth", "Claude sign-in, status and sign-out in private"),
+    ("claude_usage", "Check live Claude usage in private"),
     ("start_agent", "Start the stopped agent"),
     ("kill_agent", "Stop the agent; keep Telegram online"),
     ("restart_agent", "Start a fresh conversation"),
@@ -77,6 +79,8 @@ def help_text() -> str:
         "/dsh [flash|pro] [LEVEL] switches to native DeepSeek Harness "
         "(default: Flash, max).\n"
         "/claude [sonnet|opus|haiku] [LEVEL] starts native Claude Code.\n"
+        "/claude_auth [status|login|logout|cancel] manages Claude sign-in.\n"
+        "/claude_usage checks Claude's current limits in private.\n"
         "/recent_messages and /replay_last recover earlier requests.\n"
         "/codex_usage and /reauth manage sign-in in private.\n\n"
         "In groups: @mention this bot or reply to it. Replies stay in the "

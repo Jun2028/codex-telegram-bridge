@@ -123,6 +123,15 @@ availability depends on the selected model and installed CLI version. The
 Claude input uses bracketed paste: embedded newlines stay in one message until
 the explicit Enter, Ctrl-U clears pending input, and Escape interrupts without
 Enter. `/status` and `/agent_status` inspect Claude's own authentication.
+Private owner account controls use Claude's CLI: `/claude_auth status`,
+`/claude_auth login`, `/claude_auth logout`, and `/claude_auth cancel`.
+Login sends Claude's browser link; submit the returned one-time code with
+`/claude_code CODE` (a bare code also works while login is waiting).
+Codes are consumed before durable Telegram ingress and never sent to the agent.
+The pending login expires after ten minutes and survives a listener restart.
+`/claude_usage` runs Claude's builtin `/usage` without tools or session persistence.
+With a native Claude agent, `/reauth` starts Claude login and `/usage` queries
+Claude limits. Named Codex account commands remain Codex-specific.
 Codex account/reset commands, Codex slash controls and Goal mode return an
 unsupported-control notice rather than entering the Claude conversation.
 The control regression test runs real tmux with a deterministic CLI fixture;

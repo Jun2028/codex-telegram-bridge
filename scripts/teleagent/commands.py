@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import socket
+import subprocess
 import time
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +20,7 @@ from . import attachments as _attachments
 from . import auth as _auth
 from . import dsh as _dsh
 from . import claude as _claude
+from . import claude_auth as _claude_auth
 from . import identity as _identity
 from . import lifecycle as _lifecycle
 from . import messages as _messages
@@ -47,6 +49,8 @@ def handle_update(
     group_member_cache: dict[str, tuple[float, bool]] | None = None,
     route_state_path: Path | None = None,
 ) -> dict[str, Any] | None:
+    if _claude_auth.consume_code_update(update, args, token, allowed_chat_id, owner_user_id):
+        return None
     message = update.get("message") or update.get("edited_message")
     if not message:
         return
@@ -129,6 +133,7 @@ def handle_update(
         "/codex_usage",
         "/confirm",
         "/agent_status",
+        "/claude_auth", "/claude_usage", "/usage",
     }:
         _replies.send(
             args,
@@ -240,14 +245,39 @@ def handle_update(
     reauth_state = _state.read_json_object(reauth_state_path)
     sender_id = str((message.get("from") or {}).get("id", ""))
     pending_reset = _auth.reset_confirmation_state(reset_state_path, chat_id, sender_id)
-    if native_claude and command in {"/codex_usage", "/codex_reset", "/reauth", "/confirm"}:
-        reply = f"{command} manages Codex accounts, not native Claude Code. Claude signs in separately on this machine."
+    if command == "/claude_auth" or (native_claude and command == "/reauth"):
+        action = payload.strip().lower() or ("login" if command == "/reauth" else "status")
+        record["action"] = "claude_auth_" + action if action in {"status", "login", "logout", "cancel"} else "claude_auth_help"
+        path = _claude_auth.path_for(args)
+        try:
+            if sender_id != str(owner_user_id or allowed_chat_id):
+                reply = "Only the bot owner can use account controls."
+            elif action == "status":
+                reply = _claude_auth.login_status(path)
+            elif action == "login":
+                reply = _claude_auth.start_login(args.repo_root, path, chat_id, sender_id)
+            elif action in {"logout", "cancel"}:
+                _claude_auth.cancel_login(path)
+                reply = _claude.logout() if action == "logout" else "Claude sign-in cancelled."
+            else:
+                reply = "Use /claude_auth status, login, logout or cancel."
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            reply = "Claude account command failed. Check /claude_auth status before retrying."
+    elif command == "/claude_usage" or (native_claude and command == "/usage"):
+        record["action"] = "claude_usage"
+        try:
+            reply = (_claude.usage() if sender_id == str(owner_user_id or allowed_chat_id)
+                     else "Only the bot owner can use account controls.")
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            reply = "Claude's live usage query failed; no cached value was substituted."
+    elif native_claude and command in {"/codex_usage", "/codex_reset", "/confirm"}:
+        reply = f"{command} manages Codex accounts. Use /claude_auth or /claude_usage for Claude."
         record["action"] = "unsupported_claude_account_control"
     elif native_claude and command == "/agent_status":
         reply = _status.format_system_status(args.session, args.target_pane, args.tmux_lines,
                                             args=args, auth_failure=None)
         record["action"] = "agent_status"
-    elif command == "/codex_usage":
+    elif command in {"/codex_usage", "/usage"}:
         try:
             live_usage = _auth.inspect_codex_live_usage(args.repo_root)
             _auth.reconcile_codex_usage_state_from_live_query(

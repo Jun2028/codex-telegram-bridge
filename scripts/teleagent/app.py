@@ -21,6 +21,7 @@ from . import service as _service
 from . import ui as _ui
 from . import routing as _routing
 from . import auth as _auth
+from . import claude_auth as _claude_auth
 from . import delivery as _delivery
 from . import identity as _identity
 from . import lifecycle as _lifecycle
@@ -1006,6 +1007,7 @@ def main() -> int:
             ("usage", 10, maintain_current_codex_usage),
             ("identity", 60, lambda: refresh_bot_identity(raise_errors=True)),
             ("auth", 10, maintain_current_codex_auth),
+            ("claude_auth", 2, lambda: _claude_auth.notify_progress(args, token, chat_id)),
             ("timers", 2, deliver_due_timed_messages),
             ("watchdog", 10, maintain_watchdog),
         ):
@@ -1099,16 +1101,18 @@ def main() -> int:
                 # Quick controls never enter the agent worker. Their authorization
                 # is identical to normal messages, including group mentions.
                 try:
-                    quick = _ui.handle_quick_update(
-                        update,
-                        args,
-                        token,
-                        chat_id,
-                        owner_user_id,
-                        bot_username,
-                        group_member_cache,
-                        env=env,
-                    )
+                    quick = _claude_auth.consume_code_update(update, args, token, chat_id, owner_user_id)
+                    if not quick:
+                        quick = _ui.handle_quick_update(
+                            update,
+                            args,
+                            token,
+                            chat_id,
+                            owner_user_id,
+                            bot_username,
+                            group_member_cache,
+                            env=env,
+                        )
                     if not quick:
                         inbox.accept(update)
                         workers.wake.set()
