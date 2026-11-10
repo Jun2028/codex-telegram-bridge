@@ -50,9 +50,10 @@ def scenario(root: Path, live: bool):
 import json,sys,time,uuid,subprocess
 if sys.argv[1:] == ['auth','status']:
     print(json.dumps({'loggedIn':True,'authMethod':'fixture'}));raise SystemExit(0)
-if '--output-format' in sys.argv and sys.argv[sys.argv.index('--output-format')+1]=='json':
-    assert sys.stdin.read()=='/usage'
-    print(json.dumps({'is_error':False,'result':'Current session: 17% used'}));raise SystemExit(0)
+if '--no-session-persistence' in sys.argv:
+    assert sys.stdin.read()!='/usage'
+    print(json.dumps({'type':'rate_limit_event','rate_limit_info':{'status':'allowed','unifiedWindows':{
+        'five_hour':{'utilization':.17,'resetsAt':1900000000,'status':'allowed'}}}}));raise SystemExit(0)
 args=sys.argv[1:];text=sys.stdin.read()
 sid=args[args.index('--resume')+1] if '--resume' in args else str(uuid.uuid4())
 print(json.dumps({'type':'system','subtype':'init','session_id':sid,'model':'claude-sonnet-fixture'}),flush=True)
@@ -138,9 +139,9 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         receive('/claude_auth status')
         assert 'Claude Code signed in' in str(sent[-1][0][2]), 'Claude account status failed'
         receive('/claude_usage')
-        assert 'Current session:' in str(sent[-1][0][2]), 'native usage was not forwarded'
+        assert '5-hour window:' in str(sent[-1][0][2]), 'native usage was not forwarded'
         assert len(records())==count, 'account controls entered the agent conversation'
-        for control in ['/codex_usage','/codex_reset','/confirm','/resume_goal','/codex /clear']:
+        for control in ['/codex_reset','/confirm','/resume_goal','/codex /clear']:
             receive(control)
             assert ('Codex accounts' in str(sent[-1][0][2]) or 'unavailable in native Claude Code' in str(sent[-1][0][2]))
         assert len(records())==count, 'unsupported Codex controls entered the Claude conversation'

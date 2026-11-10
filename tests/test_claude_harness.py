@@ -45,6 +45,8 @@ if prompt == 'wait':
     time.sleep(30)
 if prompt == 'missing':
     raise SystemExit(0)
+if '--effort' in args and args[args.index('--effort')+1] == 'ultracode':
+    print("Warning: Unknown --effort value 'ultracode' - ignoring it and using the default effort.", file=sys.stderr)
 print(json.dumps({'type':'assistant','parent_tool_use_id':'child','message':{'content':[{'type':'text','text':'private child response'}]}}))
 print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error','session_id':sid,'result':'answer:'+prompt}),flush=True)
 ''')
@@ -99,6 +101,21 @@ print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error'
             replies = [delivery.codex_agent_message(e) for e in self.events(agent)]
             self.assertFalse(any(v and v[1] == "final_answer" for v in replies))
             self.assertFalse(submission.codex_session_turn_active(agent.log.path))
+
+    def test_ignored_effort_is_reported_once_and_never_as_the_answer(self):
+        agent = runner.ClaudeAgentRunner(model="cc-sonnet", effort="ultracode", repo=self.root,
+                                         state_dir=self.root / "runtime", codex_home=self.root / "logs",
+                                         binary=str(self.binary))
+        self.addCleanup(agent.log.close)
+        agent.run_message("first")
+        agent.run_message("second")
+        replies = [v for v in (delivery.codex_agent_message(e) for e in self.events(agent)) if v]
+        notices = [text for text, phase in replies if phase == "commentary"]
+        self.assertEqual(len(notices), 1)
+        self.assertIn("does not support effort 'ultracode'", notices[0])
+        self.assertEqual([text for text, phase in replies if phase == "final_answer"],
+                         ["answer:first", "answer:second"])
+        self.assertEqual(replies[0][1], "commentary")  # The notice precedes the final answer.
 
     def test_mismatched_or_corrupt_session_is_not_replaced(self):
         agent = self.new_runner()

@@ -2,6 +2,7 @@
 .agents/skills/telegram-chat/SKILL.md
 .agents/skills/telegram-chat/references/rendering.md
 .github/workflows/check.yml
+.gitattributes
 .gitignore
 LICENSE
 README.md
@@ -74,11 +75,13 @@ scripts/teleagent/commands.py
 scripts/teleagent/delivery.py
 scripts/teleagent/dsh.py
 scripts/teleagent/events.py
+scripts/teleagent/harnesses.py
 scripts/teleagent/identity.py
 scripts/teleagent/lifecycle.py
 scripts/teleagent/messages.py
 scripts/teleagent/models.py
 scripts/teleagent/processes.py
+scripts/teleagent/provider_commands.py
 scripts/teleagent/queue.py
 scripts/teleagent/replies.py
 scripts/teleagent/routing.py
@@ -104,6 +107,7 @@ tests/test_agy_runtime.py
 tests/test_claude_harness.py
 tests/test_claude_controls.py
 tests/test_claude_accounts.py
+tests/test_harness_registry.py
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
 tests/test_codex_reset_api.py

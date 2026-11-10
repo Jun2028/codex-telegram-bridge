@@ -19,6 +19,7 @@ from . import state as _state
 from . import agy as _agy
 from . import dsh as _dsh
 from . import claude as _claude
+from . import harnesses as _harnesses
 
 
 def agent_lifecycle_state_path(args: argparse.Namespace) -> Path | None:
@@ -97,9 +98,7 @@ def build_codex_agent_command(
     supervisor_q = shlex.quote(str(repo_root / "scripts" / "codex_agent_supervisor.sh"))
     model_q = shlex.quote(model)
     reasoning_q = shlex.quote(reasoning_effort)
-    binary_env = "TELEAGENT_DSH_BIN" if _dsh.is_dsh_model(model) else "TELEAGENT_CODEX_BIN"
-    if _claude.is_claude_model(model):
-        binary_env = "TELEAGENT_CLAUDE_BIN"
+    binary_env = _harnesses.for_model(model).launch_binary_env
     command = (
         f"cd {repo_q} && export TELEAGENT_INSTANCE={instance_q} && "
         "source scripts/relay_paths.sh && "

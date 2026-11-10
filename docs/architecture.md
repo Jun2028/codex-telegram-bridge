@@ -31,10 +31,38 @@ owns a dependency rather than a global in the old monolith.
 | `replies` | Durable control-result delivery, retry backoff and independent progress for each chat/topic |
 | `queue`, `submission` | FIFO, exact root-user submission checks and bounded composer recovery |
 | `lifecycle`, `processes`, `sessions` | Desired lifecycle state, tmux/process identity, valid root-session discovery |
+| `harnesses` | The one table of agent harnesses: label, pane process name, launcher variable and which controls apply |
 | `models`, `status` | Model selectors and observed agent state |
 | `auth`, `usage` | Authentication, account recovery and rate-limit event tracking |
 | `attachments`, `messages`, `identity`, `schedule` | Downloads, message formatting, scoped replay and timed work |
 | `state`, `transport`, `settings` | Atomic private JSON, locks, Telegram API and configuration |
+
+## Harnesses and commands
+
+A harness is the program in the agent pane: the Codex TUI, or a runner that
+drives another provider's CLI (`claude_agent_runner.py`, `dsh_agent_runner.py`,
+`agy_agent_runner.py`). Every runner writes the same session JSONL, so
+submission checks, delivery and status do not depend on the provider.
+
+`teleagent/harnesses.py` is the single description of each harness. To add one:
+
+1. Add its entry to `harnesses.py` and a module for its CLI protocol.
+2. Add a runner that sets the entry's process name and writes the session JSONL.
+3. Teach `relay_paths.sh`, `codex_agent_supervisor.sh` and `start_codex_agent.sh`
+   its launch models and process name. Shell cannot import the table, so
+   `tests/test_harness_registry.py` fails when the two disagree.
+4. Add its files to `config/public-export.txt` when they are portable.
+
+Harness-specific launch validation still lives in `lifecycle.start_codex_agent`
+and `messages.parse_agent_launch_payload`.
+
+`teleagent/provider_commands.py` resolves `/switch`, `/usage` and `/auth`, which
+take the provider as an argument; a new harness joins them through its table
+entry instead of a new command.
+
+`ui.COMMANDS` is the single list of Telegram commands. The command menu,
+`/help all` and the unknown-command suggestion are generated from it, and the
+same test fails when a handler and the table differ.
 
 ## Delivery invariants
 

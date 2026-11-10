@@ -16,8 +16,8 @@ SHELL_COMMANDS = {"bash", "sh", "zsh", "fish", "csh", "tcsh", "dash", "ksh"}
 
 
 # Process comm names that the relay treats as an agent runtime in a pane.
-# `codex-agy` and `codex-dsh` are native harness runners.
-CODEX_COMMANDS = {"codex", "codex-agy", "codex-dsh", "codex-claude"}
+# The harness registry owns the list; see teleagent/harnesses.py.
+from .harnesses import PROCESS_COMMANDS as CODEX_COMMANDS  # noqa: E402
 
 
 DEFAULT_SCRATCH = os.environ.get(

@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 import telegram_agent_registry as agent_registry  # noqa: E402
 
+from . import harnesses as _harnesses
 from . import settings as _settings
 from . import submission as _submission
 
@@ -81,11 +82,11 @@ def tmux_pane_has_codex_process(target_pane: str) -> bool:
     return registered_codex_process_running(target_pane)
 
 
-def tmux_pane_has_agy_process(target_pane: str) -> bool:
-    """Return whether the pane runs the Antigravity (agy) harness runner."""
+def tmux_pane_harness(target_pane: str) -> _harnesses.Harness | None:
+    """Return the harness whose runtime is alive in the pane, if any."""
     root_pid = agent_registry.tmux_pane_pid(target_pane)
     if root_pid is None:
-        return False
+        return None
     for pid in agent_registry.descendants(root_pid):
         try:
             command_name = (
@@ -93,39 +94,25 @@ def tmux_pane_has_agy_process(target_pane: str) -> bool:
             )
         except OSError:
             continue
-        if command_name == "codex-agy":
-            return True
-    return False
+        harness = _harnesses.for_process_comm(command_name)
+        if harness is not None:
+            return harness
+    return None
+
+
+def tmux_pane_has_agy_process(target_pane: str) -> bool:
+    """Return whether the pane runs the Antigravity (agy) harness runner."""
+    return tmux_pane_harness(target_pane) is _harnesses.AGY
 
 
 def tmux_pane_has_dsh_process(target_pane: str) -> bool:
     """Return whether the pane runs the native DeepSeek Harness runner."""
-    root_pid = agent_registry.tmux_pane_pid(target_pane)
-    if root_pid is None:
-        return False
-    for pid in agent_registry.descendants(root_pid):
-        try:
-            command_name = (
-                Path(f"/proc/{pid}/comm").read_text(encoding="utf-8").strip()
-            )
-        except OSError:
-            continue
-        if command_name == "codex-dsh":
-            return True
-    return False
+    return tmux_pane_harness(target_pane) is _harnesses.DSH
 
 
 def tmux_pane_has_claude_process(target_pane: str) -> bool:
-    root_pid = agent_registry.tmux_pane_pid(target_pane)
-    if root_pid is None:
-        return False
-    for pid in agent_registry.descendants(root_pid):
-        try:
-            if Path(f"/proc/{pid}/comm").read_text().strip() == "codex-claude":
-                return True
-        except OSError:
-            continue
-    return False
+    """Return whether the pane runs the native Claude Code runner."""
+    return tmux_pane_harness(target_pane) is _harnesses.CLAUDE
 
 
 def codex_process_identity(target_pane: str) -> str | None:

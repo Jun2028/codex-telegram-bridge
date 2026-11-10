@@ -43,20 +43,22 @@ new Telegram-specific command just to become a task.
 | `/queue` | Shows waiting work, pending receipts and delivery problems. |
 | `/cancel ID` | Removes a waiting message. `/cancel all` removes the queue visible here. |
 | `/interrupt NEW TASK` | Aborts the managed turn, verifies it stopped, then submits the replacement instruction. |
-| `/models` | Lists model names and example commands. |
-| `/model astra xhigh` | Selects GPT-6 Astra and effort. Changes within a Codex home preserve the conversation. |
-| `/dsh` | Switches to native DeepSeek Harness with Flash, max reasoning, and a fresh session. |
-| `/claude [sonnet\|opus\|haiku] [LEVEL]` | Switches to native Claude Code with a fresh session (default: Sonnet/high). |
-| `/claude_auth status\|login\|logout\|cancel` | Uses Claude's own account controls in the owner's private chat. Login returns a browser link; send its one-time code with `/claude_code CODE`. |
-| `/claude_usage` | Queries Claude's live usage limits. Native Claude also supports `/usage` and `/reauth`. |
-| `/reasoning high` | Changes effort in the current conversation. |
+| `/models` | Lists each provider's model names and example commands. |
+| `/switch PROVIDER [MODEL] [LEVEL]` | Changes provider with a fresh session. `PROVIDER` is `codex`, `claude`, `dsh` or `agy`; for example `/switch claude opus max`. Defaults: Claude Sonnet/high, DeepSeek Harness Flash/max. |
+| `/usage [codex\|claude]` | Shows live usage limits in the owner's private chat. Without a provider it reports the running agent's. |
+| `/auth [codex\|claude] [status\|login\|logout\|cancel]` | Sign-in controls in the owner's private chat; plain `/auth` shows status. Claude login returns a browser link; send its one-time code with `/claude_code CODE`. Codex supports `status` and `login`. |
+| `/model astra xhigh` | Inside a Codex chat, selects GPT-6 Astra and effort. Changes within a Codex home preserve the conversation. |
+| `/reasoning high` | Inside a Codex chat, changes effort in the current conversation. |
 | `/kill_agent` | Stops the agent persistently; Telegram controls stay online. |
 | `/start_agent [MODEL] [LEVEL]` | Starts a stopped agent. |
 | `/restart_agent [MODEL] [LEVEL]` | Replaces a running agent with a fresh conversation. |
 | `/timed 0.5 check the experiment` | Schedules a task in half an hour. Use `/timed list` or `/timed remove N`. |
 | `/recent_messages`, `/replay_last` | Inspects or resubmits requests from this chat. |
-| `/reauth`, `/codex_usage` | Handles sign-in and account usage in private. |
-| `/help` | Opens the compact command guide. |
+| `/help` | Opens the compact command guide. `/help all` lists every command. |
+
+Earlier spellings keep working: `/claude` and `/dsh` are `/switch claude` and
+`/switch dsh`; `/claude_usage` and `/codex_usage` are `/usage claude` and
+`/usage codex`; `/claude_auth` is `/auth claude`; `/reauth` is `/auth login`.
 
 Lifecycle commands take model/effort options, never task text. Send the task in
 a separate message. Changing between provider homes starts a fresh conversation.

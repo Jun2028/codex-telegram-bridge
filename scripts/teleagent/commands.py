@@ -21,11 +21,13 @@ from . import auth as _auth
 from . import dsh as _dsh
 from . import claude as _claude
 from . import claude_auth as _claude_auth
+from . import harnesses as _harnesses
 from . import identity as _identity
 from . import lifecycle as _lifecycle
 from . import messages as _messages
 from . import models as _models
 from . import processes as _processes
+from . import provider_commands as _provider_commands
 from . import routing as _routing
 from . import schedule as _schedule
 from . import state as _state
@@ -134,6 +136,7 @@ def handle_update(
         "/confirm",
         "/agent_status",
         "/claude_auth", "/claude_usage", "/usage",
+        "/auth", "/codex_auth",
     }:
         _replies.send(
             args,
@@ -245,8 +248,30 @@ def handle_update(
     reauth_state = _state.read_json_object(reauth_state_path)
     sender_id = str((message.get("from") or {}).get("id", ""))
     pending_reset = _auth.reset_confirmation_state(reset_state_path, chat_id, sender_id)
-    if command == "/claude_auth" or (native_claude and command == "/reauth"):
-        action = payload.strip().lower() or ("login" if command == "/reauth" else "status")
+    # A failed or pending Codex sign-in gates only harnesses that use it, so
+    # `/restart_agent cc-opus` behaves like `/claude opus`.
+    launch_skips_codex_auth = False
+    if command in {"/start_agent", "/restart_agent"}:
+        try:
+            launch_model = _messages.parse_agent_launch_payload(payload)[0]
+            launch_skips_codex_auth = not _harnesses.for_model(launch_model).uses_codex_auth
+        except ValueError:
+            pass  # The lifecycle branch reports the malformed payload.
+    # /usage, /auth and /reauth name a provider or default to the running one.
+    account_error = ""
+    try:
+        command, payload = _provider_commands.resolve_account_command(
+            command,
+            payload,
+            _harnesses.CLAUDE if native_claude else _harnesses.CODEX,
+        )
+    except ValueError as exc:
+        account_error = str(exc)
+    if account_error:
+        reply = account_error
+        record["action"] = "account_command_rejected"
+    elif command == "/claude_auth":
+        action = payload.strip().lower() or "status"
         record["action"] = "claude_auth_" + action if action in {"status", "login", "logout", "cancel"} else "claude_auth_help"
         path = _claude_auth.path_for(args)
         try:
@@ -260,24 +285,24 @@ def handle_update(
                 _claude_auth.cancel_login(path)
                 reply = _claude.logout() if action == "logout" else "Claude sign-in cancelled."
             else:
-                reply = "Use /claude_auth status, login, logout or cancel."
+                reply = _provider_commands.AUTH_HELP
         except (RuntimeError, OSError, subprocess.SubprocessError):
-            reply = "Claude account command failed. Check /claude_auth status before retrying."
-    elif command == "/claude_usage" or (native_claude and command == "/usage"):
+            reply = "Claude account command failed. Check /auth claude status before retrying."
+    elif command == "/claude_usage":
         record["action"] = "claude_usage"
         try:
             reply = (_claude.usage() if sender_id == str(owner_user_id or allowed_chat_id)
                      else "Only the bot owner can use account controls.")
         except (RuntimeError, OSError, subprocess.SubprocessError):
             reply = "Claude's live usage query failed; no cached value was substituted."
-    elif native_claude and command in {"/codex_usage", "/codex_reset", "/confirm"}:
-        reply = f"{command} manages Codex accounts. Use /claude_auth or /claude_usage for Claude."
+    elif native_claude and command in {"/codex_reset", "/confirm"}:
+        reply = f"{command} manages Codex accounts. Use /auth or /usage for Claude."
         record["action"] = "unsupported_claude_account_control"
     elif native_claude and command == "/agent_status":
         reply = _status.format_system_status(args.session, args.target_pane, args.tmux_lines,
                                             args=args, auth_failure=None)
         record["action"] = "agent_status"
-    elif command in {"/codex_usage", "/usage"}:
+    elif command == "/codex_usage":
         try:
             live_usage = _auth.inspect_codex_live_usage(args.repo_root)
             _auth.reconcile_codex_usage_state_from_live_query(
@@ -594,7 +619,17 @@ def handle_update(
             )
             record["action"] = "timed_message_rejected"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
-    elif command == "/reauth":
+    elif command == "/codex_auth" and payload.strip().lower() != "login":
+        if payload.strip().lower() in {"", "status"}:
+            reply = "Codex sign-in: " + _auth.codex_login_status_summary()
+            record["action"] = "codex_auth_status"
+        else:
+            reply = (
+                "Codex sign-in supports only status and login from Telegram: "
+                "/auth codex status or /auth codex login."
+            )
+            record["action"] = "codex_auth_unsupported"
+    elif command == "/codex_auth":
         if str(reauth_state.get("phase") or "") == "authenticated":
             reply = "Codex sign-in succeeded; the listener is finishing the agent restart now."
             record["action"] = "codex_reauth_authenticated"
@@ -630,7 +665,11 @@ def handle_update(
                 )
                 record["action"] = "codex_reauth_started"
             record["reauth_attempt_id"] = reauth_state.get("attempt_id")
-    elif command in _settings.CODEX_AUTH_BLOCKED_COMMANDS and auth_failure:
+    elif (
+        command in _settings.CODEX_AUTH_BLOCKED_COMMANDS
+        and auth_failure
+        and not launch_skips_codex_auth
+    ):
         reply = (
             "Agent sign-in is required. The owner can use /reauth in private."
             if is_group
@@ -640,9 +679,9 @@ def handle_update(
         record["auth_failure_reason"] = auth_failure.get("reason")
         record["relay_result"] = "not relayed: cached Codex authentication failure"
     elif command == "/help":
-        from .ui import help_text
+        from .ui import help_reply
 
-        reply = help_text()
+        reply = help_reply(payload)
         record["action"] = "help"
     elif command == "/ping":
         reply = f"pong from {socket.gethostname()} at {datetime.now(timezone.utc).isoformat(timespec='seconds')}"
@@ -730,7 +769,11 @@ def handle_update(
     elif command in {
         "/start_agent",
         "/restart_agent",
-    } and _auth.codex_reauth_in_progress(reauth_state) and not native_claude:
+    } and (
+        _auth.codex_reauth_in_progress(reauth_state)
+        and not native_claude
+        and not launch_skips_codex_auth
+    ):
         reply = (
             "Codex device sign-in is still in progress. Finish it first, then run this "
             "lifecycle command again."
@@ -786,13 +829,10 @@ def handle_update(
                 token,
                 source_chat_id,
                 (
-                    f"Starting Codex agent in tmux window {args.codex_window} "
-                    f"with model={model}, reasoning={reasoning_effort}..."
-                )
-                if command == "/start_agent"
-                else (
-                    f"Restarting Codex agent in tmux window {args.codex_window} "
-                    f"with model={model}, reasoning={reasoning_effort}..."
+                    ("Starting " if command == "/start_agent" else "Restarting ")
+                    + f"{_harnesses.for_model(model).label} agent in tmux window "
+                    f"{args.codex_window} with model={model}, "
+                    f"reasoning={reasoning_effort}..."
                 ),
             )
             target_pane, result, meta = _lifecycle.start_codex_agent(
@@ -846,13 +886,21 @@ def handle_update(
             )
             record["action"] = command.lstrip("/") + "_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
-    elif command in {"/dsh", "/claude"}:
-        harness = _dsh if command == "/dsh" else _claude
-        label = "DeepSeek Harness" if command == "/dsh" else "Claude Code"
-        action = command.lstrip("/")
+    elif command in _provider_commands.SWITCH_COMMANDS:
+        # /claude and /dsh are /switch claude and /switch dsh.
+        label = "another provider"
+        action = "switch"
         try:
-            model, reasoning_effort = harness.parse_launch_payload(payload)
-            if command == "/claude":
+            harness, model, reasoning_effort, native_model = (
+                _provider_commands.parse_switch(command, payload)
+            )
+            label, action = harness.label, harness.key
+            if harness.uses_codex_auth and (
+                _auth.active_codex_auth_failure(auth_state_path)
+                or _auth.codex_reauth_in_progress(reauth_state)
+            ):
+                raise RuntimeError("Codex sign-in is required first; use /auth codex login")
+            if harness is _harnesses.CLAUDE:
                 _claude.ensure_available()
             _lifecycle.set_agent_desired_state(
                 args,
@@ -868,7 +916,6 @@ def handle_update(
                 reasoning_effort=reasoning_effort,
             )
             args.target_pane = target_pane
-            native_model = harness.native_model(model)
             reply = (
                 f"{label} started in {target_pane} with "
                 f"model={native_model}, reasoning={reasoning_effort}. "
@@ -1366,7 +1413,9 @@ def handle_update(
         reply = "Empty message. Send normal text for the agent, or use /status, /ping, or /help."
         record["action"] = "empty"
     else:
-        reply = "Unknown command. Send normal text for the agent, or use /status, /ping, or /help."
+        from .ui import unknown_command_text
+
+        reply = unknown_command_text(command)
         record["action"] = "unknown"
 
     relay_result = record.get("relay_result")

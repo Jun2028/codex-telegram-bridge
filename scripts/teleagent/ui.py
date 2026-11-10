@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import difflib
 import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -13,22 +15,72 @@ from . import messages, routing, state, status, transport
 from .settings import SGT
 
 QUICK_COMMANDS = {"/start", "/help", "/ping", "/status", "/queue", "/cancel", "/models", "/files"}
-MENU = [
-    ("status", "Agent state and reply delivery"),
-    ("queue", "Waiting messages and failed deliveries"),
-    ("help", "How to use this bot"),
-    ("models", "Choose a model and reasoning level"),
-    ("codex_reset", "Check and redeem an available Codex usage reset"),
-    ("interrupt", "Stop the current turn and submit a new instruction"),
-    ("dsh", "Switch to the native DeepSeek Harness"),
-    ("claude", "Switch to native Claude Code"),
-    ("claude_auth", "Claude sign-in, status and sign-out in private"),
-    ("claude_usage", "Check live Claude usage in private"),
-    ("start_agent", "Start the stopped agent"),
-    ("kill_agent", "Stop the agent; keep Telegram online"),
-    ("restart_agent", "Start a fresh conversation"),
-    ("timed", "Schedule a message"),
-]
+
+
+@dataclass(frozen=True)
+class Command:
+    """One Telegram command the listener handles.
+
+    This table is the single list of commands: the Telegram menu, `/help all`
+    and the unknown-command suggestion are generated from it, and a test fails
+    when a handler and this table disagree.
+    """
+
+    name: str
+    summary: str
+    args: str = ""  # Argument syntax shown in `/help all`.
+    menu: bool = False  # Offered in Telegram's command menu.
+    same_as: str = ""  # The command this is another spelling of.
+
+
+PROVIDERS = "codex|claude|dsh|agy"
+COMMANDS: tuple[Command, ...] = (
+    # Everyday work.
+    Command("status", "Agent state and reply delivery", menu=True),
+    Command("queue", "Waiting messages and failed deliveries", menu=True),
+    Command("cancel", "Remove a waiting message", "[NUMBER|all]"),
+    Command("interrupt", "Stop the current turn and submit a new instruction", "NEW TASK", menu=True),
+    Command("timed", "Schedule a message", "HOURS MESSAGE | list | remove N", menu=True),
+    Command("recent_messages", "List earlier requests from this chat", "[COUNT]"),
+    Command("replay_last", "Resubmit the most recent requests", "[COUNT]"),
+    Command("replay_last_long", "Resubmit the most recent long requests", "[COUNT]"),
+    Command("replay_messages", "Resubmit requests by message id", "ID ..."),
+    Command("files", "Open the file browser in private chat"),
+    Command("help", "How to use this bot", "[all]", menu=True),
+    Command("ping", "Check that the listener is online"),
+    # The agent: the same words for every provider.
+    Command("models", "Choose a model and reasoning level", menu=True),
+    Command("switch", "Change provider; starts a fresh conversation",
+            f"{PROVIDERS} [MODEL] [LEVEL]", menu=True),
+    Command("start_agent", "Start the stopped agent", "[MODEL] [LEVEL]", menu=True),
+    Command("restart_agent", "Start a fresh conversation", "[MODEL] [LEVEL]", menu=True),
+    Command("kill_agent", "Stop the agent; keep Telegram online", menu=True),
+    Command("agent_status", "Agent identity, session and sign-in details in private"),
+    # Accounts, in the owner's private chat. No provider means the running one.
+    Command("usage", "Check live usage limits", "[codex|claude]", menu=True),
+    Command("auth", "Sign-in status, sign in or sign out",
+            "[codex|claude] [status|login|logout|cancel]", menu=True),
+    Command("claude_code", "Submit the one-time code from Claude sign-in", "CODE"),
+    Command("codex_reset", "Check and redeem an available Codex usage reset", menu=True),
+    Command("confirm", "Confirm a pending Codex usage reset"),
+    # Controls that exist only in a Codex chat.
+    Command("model", "Change model in the current Codex chat", "NAME [LEVEL]"),
+    Command("reasoning", "Change effort in the current Codex chat", "LEVEL"),
+    Command("resume_goal", "Resume a paused Codex goal"),
+    Command("codex", "Send a slash command to the Codex chat", "/COMMAND"),
+    # Other spellings that keep working.
+    Command("start", "", same_as="/help"),
+    Command("agent", "", same_as="sending plain text"),
+    Command("claude", "", same_as="/switch claude"),
+    Command("dsh", "", same_as="/switch dsh"),
+    Command("claude_usage", "", same_as="/usage claude"),
+    Command("codex_usage", "", same_as="/usage codex"),
+    Command("claude_auth", "", same_as="/auth claude"),
+    Command("codex_auth", "", same_as="/auth codex"),
+    Command("reauth", "", same_as="/auth login"),
+)
+COMMAND_NAMES = frozenset(command.name for command in COMMANDS)
+MENU = [(command.name, command.summary) for command in COMMANDS if command.menu]
 BUTTONS = {
     "inline_keyboard": [
         [
@@ -72,41 +124,72 @@ def help_text() -> str:
         "/queue — waiting messages and delivery problems\n"
         "/cancel [number] — remove a waiting message\n"
         "/interrupt NEW TASK — stop this turn and submit NEW TASK\n"
+        "/timed HOURS MESSAGE — send a task later\n"
+        "/recent_messages and /replay_last recover earlier requests.\n\n"
+        "The same commands work for every provider "
+        "(codex, claude, dsh, agy):\n"
+        "/switch PROVIDER [MODEL] [LEVEL] — change provider, fresh conversation\n"
+        "/usage [PROVIDER] — live usage limits, in private\n"
+        "/auth [PROVIDER] [status|login|logout|cancel] — sign-in, in private\n"
         "/models — model choices; /reasoning LEVEL changes effort\n"
-        "/timed HOURS MESSAGE — send a task later\n\n"
         "/kill_agent stops the agent; /start_agent starts it.\n"
         "/restart_agent starts a fresh conversation.\n"
-        "/dsh [flash|pro] [LEVEL] switches to native DeepSeek Harness "
-        "(default: Flash, max).\n"
-        "/claude [sonnet|opus|haiku] [LEVEL] starts native Claude Code.\n"
-        "/claude_auth [status|login|logout|cancel] manages Claude sign-in.\n"
-        "/claude_usage checks Claude's current limits in private.\n"
-        "/recent_messages and /replay_last recover earlier requests.\n"
-        "/codex_usage and /reauth manage sign-in in private.\n\n"
+        "Without a provider, /usage and /auth apply to the running agent.\n"
+        "/help all lists every command.\n\n"
         "In groups: @mention this bot or reply to it. Replies stay in the "
         "originating chat/topic. Other chats wait while it is working. "
         "Only the owner can change or stop the agent."
     )
 
 
+def all_commands_text() -> str:
+    """Every command the listener accepts, generated from `COMMANDS`."""
+    lines = ["Every command:"]
+    for command in COMMANDS:
+        if command.same_as:
+            continue
+        syntax = f"/{command.name} {command.args}".rstrip()
+        lines.append(f"{syntax} — {command.summary}")
+    lines.append("")
+    lines.append("Other spellings that still work:")
+    lines += [f"/{command.name} = {command.same_as}"
+              for command in COMMANDS if command.same_as]
+    return "\n".join(lines)
+
+
+def help_reply(payload: str) -> str:
+    return all_commands_text() if payload.strip().lower() == "all" else help_text()
+
+
+def unknown_command_text(command: str) -> str:
+    """Point a mistyped command at the nearest real one."""
+    close = difflib.get_close_matches(
+        command.lstrip("/"), sorted(COMMAND_NAMES), n=1, cutoff=0.6
+    )
+    hint = f"Did you mean /{close[0]}? " if close else ""
+    return (
+        f"Unknown command. {hint}Send normal text for the agent, "
+        "or use /help all to list every command."
+    )
+
+
 def models_text() -> str:
     return (
-        "Send /model NAME [LEVEL].\n\n"
-        "sol / latest — GPT-6.1 Sol (default)\n"
-        "astra — GPT-6 Astra\ngpt-5.6-sol — GPT-5.6 Sol\n"
-        "luna — GPT-5.6 Luna\nspark — GPT-5.3 Codex Spark\n"
-        "ds-flash / ds-pro — DeepSeek V4\n"
-        "g-flash / argon / sonnet / opus / oss — Antigravity (agy) harness; "
-        "start with /restart_agent NAME [LEVEL]\n\n"
-        "/dsh [flash|pro] [off|low|high|max] switches to the native "
-        "DeepSeek Harness with a fresh session; the default is Flash/max.\n\n"
-        "/claude [sonnet|opus|haiku] [LEVEL] starts native Claude Code "
-        "with a fresh session (default: Sonnet/high). "
-        "/restart_agent cc-sonnet|cc-opus|cc-haiku [LEVEL] also works.\n\n"
-        "Example: /model astra xhigh\n"
-        "/reasoning high changes effort in the current chat.\n"
-        "Changing provider starts a fresh conversation; changes within the "
-        "same Codex home preserve it."
+        "Start any model with /switch PROVIDER [MODEL] [LEVEL]. "
+        "It begins a fresh conversation.\n\n"
+        "codex — sol / latest (GPT-6.1 Sol, default), astra (GPT-6 Astra), "
+        "gpt-5.6-sol, luna (GPT-5.6 Luna), spark (GPT-5.3 Codex Spark), "
+        "ds-flash / ds-pro (DeepSeek V4 through Codex)\n"
+        "claude — sonnet (default), opus, haiku; default level high\n"
+        "dsh — flash (default), pro; levels off, low, high, max (default)\n"
+        "agy — g-flash, argon, sonnet, opus, oss (Antigravity-hosted)\n\n"
+        "Examples: /switch claude opus max, /switch codex astra xhigh, "
+        "/switch agy g-flash\n\n"
+        "Inside a Codex chat, /model NAME [LEVEL] and /reasoning LEVEL change "
+        "the model or effort and keep the conversation while it stays on the "
+        "same Codex home.\n"
+        "/start_agent and /restart_agent also take MODEL [LEVEL]; there "
+        "Claude models are written cc-sonnet, cc-opus, cc-haiku."
     )
 
 
@@ -357,7 +440,7 @@ def handle_quick_update(
                  "Open /files in the bot owner's private chat." if is_group else
                  "The file browser is not configured or its launch URL is unavailable.")
     else:
-        reply = help_text()
+        reply = help_reply(payload)
         if file_url:
             reply += "\n\n/files opens the file browser inside Telegram."
     buttons = None

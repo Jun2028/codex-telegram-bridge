@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 MODELS = {"cc-sonnet": "sonnet", "cc-opus": "opus", "cc-haiku": "haiku"}
@@ -61,21 +62,81 @@ def logout() -> str:
     return "Claude Code signed out on this machine."
 
 
+# Marker the CLI prints on stderr when it ignores an effort level it does not know.
+UNKNOWN_EFFORT_WARNING = "Unknown --effort value"
+
+USAGE_WINDOW_LABELS = {"five_hour": "5-hour window", "seven_day": "7-day window"}
+USAGE_PROBE_PROMPT = "Reply with OK."
+
+
+def _format_reset(value: object) -> str:
+    if not isinstance(value, (int, float)) or isinstance(value, bool) or value <= 0:
+        return ""
+    # The listener's own time zone, so the same code reads correctly on any host.
+    return time.strftime(", resets %a %d %b %H:%M %Z", time.localtime(value)).rstrip()
+
+
+def _format_window(name: str, window: dict) -> str:
+    label = USAGE_WINDOW_LABELS.get(name, name.replace("_", " "))
+    used = window.get("utilization")
+    line = (f"{label}: {round(used * 100)}% used"
+            if isinstance(used, (int, float)) and not isinstance(used, bool)
+            else f"{label}: usage not reported")
+    line += _format_reset(window.get("resetsAt"))
+    status = window.get("status")
+    if isinstance(status, str) and status and status != "allowed":
+        line += f" ({status.replace('_', ' ')})"
+    return line
+
+
+def format_rate_limits(info: dict) -> str:
+    """Render one `rate_limit_info` object without account identifiers."""
+    lines = ["Claude usage, checked live:"]
+    windows = info.get("unifiedWindows")
+    if isinstance(windows, dict):
+        lines += [_format_window(str(name), window)
+                  for name, window in windows.items() if isinstance(window, dict)]
+    if len(lines) == 1:
+        # Older or API-key responses describe only the binding window.
+        name = info.get("rateLimitType")
+        if not isinstance(name, str) or not name:
+            raise ValueError("no rate-limit window reported")
+        lines.append(_format_window(name, info))
+    if info.get("isUsingOverage") is True:
+        lines.append("Extra usage is being consumed.")
+    return "\n".join(lines)
+
+
 def usage() -> str:
-    # Ask Claude's builtin command in an empty directory without tools/history.
+    """Read Claude's live rate-limit windows.
+
+    Print mode does not run the interactive `/usage` command: the model answers
+    it in prose. The CLI does report its limits as a `rate_limit_event` on each
+    stream-json turn, so one minimal turn in an empty directory, without tools
+    or history, reads the current values.
+    """
+    failure = "Claude's live usage query failed; no cached value was substituted"
     with tempfile.TemporaryDirectory(prefix="claude-usage-") as directory:
-        result = subprocess.run([binary(), "--print", "--output-format", "json",
-            "--model", "sonnet", "--effort", "low", "--tools", "",
-            "--no-session-persistence"], input="/usage", text=True,
+        result = subprocess.run([binary(), "--print", "--output-format", "stream-json",
+            "--verbose", "--model", "haiku", "--effort", "low", "--tools", "",
+            "--no-session-persistence"], input=USAGE_PROBE_PROMPT, text=True,
             capture_output=True, cwd=directory, timeout=60)
+    info = None
+    for line in result.stdout.splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if (isinstance(event, dict) and event.get("type") == "rate_limit_event"
+                and isinstance(event.get("rate_limit_info"), dict)):
+            info = event["rate_limit_info"]
+    if result.returncode or info is None:
+        # Never forward stdout or stderr: either may carry account details.
+        raise RuntimeError(failure)
     try:
-        data = json.loads(result.stdout)
-        report = data.get("result")
-        if result.returncode or data.get("is_error") or not isinstance(report, str) or not report.strip():
-            raise ValueError()
-    except (ValueError, AttributeError):
-        raise RuntimeError("Claude's live usage query failed; no cached value was substituted") from None
-    return report.strip()[:6000]
+        return format_rate_limits(info)
+    except ValueError:
+        raise RuntimeError(failure) from None
 
 
 def main() -> int:
@@ -91,11 +152,12 @@ def main() -> int:
 
 def authentication_status() -> str:
     """Read Claude's own account state without exposing account identifiers."""
-    binary = shutil.which(os.environ.get("TELEAGENT_CLAUDE_BIN", "claude"))
-    if not binary:
+    try:
+        executable = binary()
+    except RuntimeError:
         return "Claude Code CLI unavailable"
     try:
-        result = subprocess.run([binary, "auth", "status"], capture_output=True,
+        result = subprocess.run([executable, "auth", "status"], capture_output=True,
                                 text=True, timeout=20)
         data = json.loads(result.stdout)
         return "Claude Code signed in" if result.returncode == 0 and data.get("loggedIn") else "Claude Code sign-in required"

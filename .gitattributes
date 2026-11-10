@@ -1,0 +1,4 @@
+# The relay runs under bash on Linux. Keep Unix line endings in every checkout,
+# including Windows ones that are run through WSL.
+* text=auto eol=lf
+*.png binary

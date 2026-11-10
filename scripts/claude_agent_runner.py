@@ -94,6 +94,7 @@ class ClaudeAgentRunner:
         self.log.turn_context(claude.native_model(model), effort)
         self.process: subprocess.Popen | None = None
         self.interrupted = False
+        self.effort_warned = False
         self.lock = threading.RLock()
 
     def save_session(self, session_id: str) -> None:
@@ -162,6 +163,14 @@ class ClaudeAgentRunner:
                             self.process.wait()
                         self.process.stdout.close()
                         self.process = None
+                errors.seek(0)
+                if claude.UNKNOWN_EFFORT_WARNING in errors.read() and not self.effort_warned:
+                    # The CLI ignores an effort it does not know and still exits 0.
+                    self.effort_warned = True
+                    self.log.agent_message(
+                        f"This Claude Code version does not support effort '{self.effort}' and "
+                        "is using its default effort. Start a fresh /claude with a supported level.",
+                        phase="commentary")
                 if self.interrupted:
                     self.log.agent_message("Claude Code turn interrupted.", phase="commentary")
                 elif returncode == 0 and result and not result.get("is_error") and result.get("subtype") == "success":

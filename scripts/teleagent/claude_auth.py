@@ -53,7 +53,7 @@ def start_login(repo: Path, path: Path, chat_id: str, sender_id: str) -> str:
         data = state.read_json_object(path)
         if data.get("phase") in ACTIVE:
             if time.time() - data.get("started_ts", 0) < 620:
-                return "Claude sign-in is already in progress. Use /claude_auth status or /claude_auth cancel."
+                return "Claude sign-in is already in progress. Use /auth claude status or /auth claude cancel."
             cancel_login(path)
         attempt = uuid.uuid4().hex
         data = dict(attempt_id=attempt, phase="starting", chat_id=str(chat_id),
@@ -137,7 +137,7 @@ def consume_code_update(update: dict, args, token: str, owner_chat: str, owner_u
         elif (data.get("phase") != "awaiting_code" or data.get("chat_id") != source
               or data.get("sender_id") != sender or not CODE.fullmatch(code)
               or not validated_url(url) or not expected or code.split("#", 1)[-1] != expected):
-            reply = "That code does not match a waiting Claude sign-in. Use /claude_auth login to start one."
+            reply = "That code does not match a waiting Claude sign-in. Use /auth claude login to start one."
         else:
             target = code_path(path, data["attempt_id"])
             state.atomic_write(target, code + "\n")
@@ -158,7 +158,7 @@ def notify_progress(args, token: str, owner_chat: str) -> None:
         if phase == "awaiting_code" and not data.get("instructions_sent"):
             reply, flag = login_status(path), "instructions_sent"
         elif phase in {"authenticated", "failed"} and not data.get("completion_sent"):
-            reply = "Claude sign-in complete." if phase == "authenticated" else "Claude sign-in failed or expired. Use /claude_auth login to try again."
+            reply = "Claude sign-in complete." if phase == "authenticated" else "Claude sign-in failed or expired. Use /auth claude login to try again."
             flag = "completion_sent"
         else:
             return

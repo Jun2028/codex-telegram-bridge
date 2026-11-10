@@ -47,9 +47,13 @@ elif sys.argv[1:]==['auth','status']:
 elif sys.argv[1:]==['auth','logout']:
     marker.unlink(missing_ok=True)
 else:
-    assert sys.stdin.read()=='/usage'
+    # Print mode never runs the interactive /usage command; limits arrive as an event.
+    assert sys.stdin.read()!='/usage'
     assert '--no-session-persistence' in sys.argv and '--tools' in sys.argv
-    print(json.dumps(dict(result='Current session: 17% used',is_error=False)))
+    print(json.dumps(dict(type='rate_limit_event',rate_limit_info=dict(status='allowed',
+        unifiedWindows=dict(five_hour=dict(utilization=.17,resetsAt=1900000000,status='allowed'),
+                            seven_day=dict(utilization=.4,resetsAt=1900500000,status='allowed'))))))
+    print(json.dumps(dict(type='result',subtype='success',is_error=False,result='account@example.com')))
 ''')
         self.binary.chmod(0o755)
         env = mock.patch.dict(os.environ, TELEAGENT_CLAUDE_BIN=str(self.binary))
@@ -104,7 +108,10 @@ else:
         self.command("/claude_auth status")
         self.assertEqual(self.send.call_args.args[-1], "Claude Code signed in")
         self.command("/usage")
-        self.assertIn("17%", self.send.call_args.args[-1])
+        self.assertIn("5-hour window: 17% used, resets", self.send.call_args.args[-1])
+        self.assertIn("7-day window: 40% used", self.send.call_args.args[-1])
+        # Only the limit event is reported, never the model's own reply.
+        self.assertNotIn("account@example.com", self.send.call_args.args[-1])
         self.command("/claude_usage", native=False)
         self.assertIn("17%", self.send.call_args.args[-1])
         self.command("/claude_auth logout")
@@ -141,3 +148,19 @@ else:
                  stdout='{"result":"secret credential in error","is_error":true}', stderr="secret")):
             with self.assertRaisesRegex(RuntimeError, "no cached"):
                 claude.usage()
+        # A turn that reports no limit window is a failure, not an empty report.
+        with mock.patch.object(claude.subprocess, "run", return_value=subprocess.CompletedProcess([], 0,
+                 stdout='{"type":"result","subtype":"success","result":"OK"}\n', stderr="")):
+            with self.assertRaisesRegex(RuntimeError, "no cached"):
+                claude.usage()
+
+    def test_rate_limit_report_formats_only_known_safe_fields(self):
+        report = claude.format_rate_limits({"rateLimitType": "five_hour", "resetsAt": 1900000000,
+            "status": "allowed_warning", "utilization": .91, "isUsingOverage": True,
+            "orgId": "org-private"})
+        self.assertIn("5-hour window: 91% used, resets", report)
+        self.assertIn("(allowed warning)", report)
+        self.assertIn("Extra usage is being consumed.", report)
+        self.assertNotIn("org-private", report)
+        with self.assertRaises(ValueError):
+            claude.format_rate_limits({"status": "allowed"})

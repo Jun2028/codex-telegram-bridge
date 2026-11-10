@@ -106,6 +106,15 @@ effort before startup resolves the configured effort.
 The last actual `turn_context` is the authority for the model shown in status.
 Before the first turn, status may fall back to the configured/live selector.
 
+Provider commands take the provider as an argument, so every harness uses the
+same words: `/switch codex|claude|dsh|agy [MODEL] [LEVEL]` changes provider with
+a fresh session, `/usage [codex|claude]` shows live limits, and
+`/auth [codex|claude] [status|login|logout|cancel]` handles sign-in. Without a
+provider, `/usage` and `/auth` apply to the running agent. The provider-named
+commands below (`/claude`, `/dsh`, `/claude_usage`, `/codex_usage`,
+`/claude_auth`, `/reauth`) are other spellings of these. `/usage codex` and
+`/auth codex` also work while Claude is the running agent.
+
 Native Claude Code is available through `/claude [sonnet|opus|haiku] [LEVEL]`
 (default: Sonnet/high), or `/restart_agent cc-sonnet|cc-opus|cc-haiku [LEVEL]`.
 The `claude` CLI must already be installed and signed in on that machine;
@@ -129,7 +138,11 @@ Login sends Claude's browser link; submit the returned one-time code with
 `/claude_code CODE` (a bare code also works while login is waiting).
 Codes are consumed before durable Telegram ingress and never sent to the agent.
 The pending login expires after ten minutes and survives a listener restart.
-`/claude_usage` runs Claude's builtin `/usage` without tools or session persistence.
+`/claude_usage` reads the rate-limit windows Claude reports on a turn: it runs one
+minimal turn without tools or session persistence and formats the 5-hour and
+7-day figures. Print mode does not run the interactive `/usage` command.
+If the installed CLI ignores the selected effort level, the agent says so once
+and continues at Claude's default effort.
 With a native Claude agent, `/reauth` starts Claude login and `/usage` queries
 Claude limits. Named Codex account commands remain Codex-specific.
 Codex account/reset commands, Codex slash controls and Goal mode return an
