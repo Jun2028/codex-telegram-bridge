@@ -22,6 +22,7 @@ from . import processes as _processes
 from . import sessions as _sessions
 from . import state as _state
 from . import submission as _submission
+from . import claude as _claude
 
 
 def format_uptime(seconds: float) -> str:
@@ -245,7 +246,10 @@ def format_system_status(
         if args is not None
         else _settings.AGENT_DESIRED_RUNNING
     )
-    auth_text = "reauth required" if auth_failure else "no failure detected"
+    native_claude = _processes.tmux_pane_has_claude_process(target_pane)
+    if native_claude:
+        auth_failure = None
+    auth_text = _claude.authentication_status() if native_claude else "reauth required" if auth_failure else "no failure detected"
     meta = agent_registry.active_agent_for_pane(target_pane)
     if meta:
         meta = agent_registry.refresh_codex_session_link(meta, target_pane=target_pane)
@@ -307,7 +311,7 @@ def format_system_status(
     )
     if auth_failure:
         activity = "sign-in required — /reauth in private"
-    goal_text = codex_session_goal_status(
+    goal_text = "unavailable in native Claude Code" if native_claude else codex_session_goal_status(
         session_path, sqlite_home=os.environ.get("CODEX_SQLITE_HOME")
     )
     lines = [

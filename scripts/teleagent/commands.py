@@ -233,10 +233,21 @@ def handle_update(
         )
     )
     auth_failure = _auth.active_codex_auth_failure(auth_state_path)
+    native_target = getattr(args, "target_pane", "")
+    native_claude = bool(native_target and _processes.tmux_pane_has_claude_process(native_target))
+    if native_claude:
+        auth_failure = None
     reauth_state = _state.read_json_object(reauth_state_path)
     sender_id = str((message.get("from") or {}).get("id", ""))
     pending_reset = _auth.reset_confirmation_state(reset_state_path, chat_id, sender_id)
-    if command == "/codex_usage":
+    if native_claude and command in {"/codex_usage", "/codex_reset", "/reauth", "/confirm"}:
+        reply = f"{command} manages Codex accounts, not native Claude Code. Claude signs in separately on this machine."
+        record["action"] = "unsupported_claude_account_control"
+    elif native_claude and command == "/agent_status":
+        reply = _status.format_system_status(args.session, args.target_pane, args.tmux_lines,
+                                            args=args, auth_failure=None)
+        record["action"] = "agent_status"
+    elif command == "/codex_usage":
         try:
             live_usage = _auth.inspect_codex_live_usage(args.repo_root)
             _auth.reconcile_codex_usage_state_from_live_query(
@@ -689,7 +700,7 @@ def handle_update(
     elif command in {
         "/start_agent",
         "/restart_agent",
-    } and _auth.codex_reauth_in_progress(reauth_state):
+    } and _auth.codex_reauth_in_progress(reauth_state) and not native_claude:
         reply = (
             "Codex device sign-in is still in progress. Finish it first, then run this "
             "lifecycle command again."

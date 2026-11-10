@@ -120,6 +120,15 @@ direct users to a fresh `/claude` launch instead of typing Codex commands into
 Claude. Effort levels are `low`, `medium`, `high`, `xhigh`, `max`, and `ultracode`;
 availability depends on the selected model and installed CLI version. The
 `/restart_agent` syntax accepts the shared effort names through `max`.
+Claude input uses bracketed paste: embedded newlines stay in one message until
+the explicit Enter, Ctrl-U clears pending input, and Escape interrupts without
+Enter. `/status` and `/agent_status` inspect Claude's own authentication.
+Codex account/reset commands, Codex slash controls and Goal mode return an
+unsupported-control notice rather than entering the Claude conversation.
+The control regression test runs real tmux with a deterministic CLI fixture;
+set `TELEAGENT_CLAUDE_LIVE_TEST=1` when running `tests/test_claude_controls.py`
+to use the installed, signed-in Claude CLI instead. Both use an isolated tmux
+server and capture Telegram transport locally.
 Implementation follows the official [CLI reference](https://code.claude.com/docs/en/cli-reference)
 and [print-mode protocol](https://code.claude.com/docs/en/headless).
 

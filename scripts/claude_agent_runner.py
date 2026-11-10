@@ -7,6 +7,7 @@ import argparse
 import json
 import os
 import queue
+import select
 import signal
 import subprocess
 import tempfile
@@ -14,14 +15,16 @@ import termios
 import threading
 from pathlib import Path
 
-from dsh_agent_runner import MessageAssembler, SessionLog, set_process_comm
+from dsh_agent_runner import SessionLog, set_process_comm
 from notify import redact
 from teleagent import claude
 
 
 def read_stdin(events: queue.Queue, interrupt) -> None:
-    """Read Escape immediately: a remote interrupt does not include Enter."""
+    """Keep bracketed pastes intact; only the following Enter submits them."""
     pending = bytearray()
+    pasting = False
+    paste_start, paste_end = b"\x1b[200~", b"\x1b[201~"
     while True:
         try:
             char = os.read(0, 1)
@@ -30,12 +33,32 @@ def read_stdin(events: queue.Queue, interrupt) -> None:
         if not char or char == b"\x04":
             events.put(("eof", ""))
             return
+        if pasting:
+            pending.extend(char)
+            if pending.endswith(paste_end):
+                del pending[-len(paste_end):]
+                pasting = False
+            continue
         if char == b"\x1b":
+            sequence = bytearray(char)
+            while paste_start.startswith(sequence) and len(sequence) < len(paste_start):
+                if not select.select([0], [], [], .05)[0]:
+                    break
+                following = os.read(0, 1)
+                if not following:
+                    break
+                sequence.extend(following)
+            if sequence == paste_start:
+                pasting = True
+                continue
             pending.clear()
             interrupt()
             events.put(("interrupt", ""))
+        elif char == b"\x15":  # The relay clears the composer with Ctrl-U.
+            pending.clear()
         elif char == b"\n":
-            events.put(("line", pending.decode("utf-8", errors="replace")))
+            if pending:
+                events.put(("message", pending.decode("utf-8", errors="replace")))
             pending.clear()
         else:
             pending.extend(char)
@@ -168,28 +191,21 @@ class ClaudeAgentRunner:
             mode[6][termios.VMIN] = 1
             mode[6][termios.VTIME] = 0
             termios.tcsetattr(0, termios.TCSANOW, mode)
+            print("\x1b[?2004h", end="", flush=True)
         threading.Thread(target=read_stdin, args=(events, self.interrupt), daemon=True).start()
-        assembler = MessageAssembler()
         signal.signal(signal.SIGTERM, lambda *_: (self.interrupt(), events.put(("eof", ""))))
         print(f"Claude Code ready · model={claude.native_model(self.model)} · effort={self.effort}", flush=True)
         try:
             while True:
-                try:
-                    kind, value = events.get(timeout=assembler.idle_seconds)
-                except queue.Empty:
-                    message = assembler.take()
-                    if message:
-                        self.run_message(message)
-                    continue
+                kind, value = events.get()
                 if kind == "eof":
                     return 0
-                if kind == "interrupt":
-                    assembler.take()
-                elif kind == "line":
-                    assembler.feed(value)
+                if kind == "message":
+                    self.run_message(value)
         finally:
             self.log.close()
             if previous_terminal is not None:
+                print("\x1b[?2004l", end="", flush=True)
                 termios.tcsetattr(0, termios.TCSANOW, previous_terminal)
 
 

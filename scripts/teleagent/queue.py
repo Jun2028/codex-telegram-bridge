@@ -515,7 +515,8 @@ def drain_telegram_relay_queue(
     if _lifecycle.agent_desired_state(args) == _settings.AGENT_DESIRED_STOPPED:
         return []
     auth_path = getattr(args, "codex_auth_state_path", None)
-    if auth_path and _auth.active_codex_auth_failure(Path(auth_path)):
+    if (auth_path and _auth.active_codex_auth_failure(Path(auth_path))
+            and not _processes.tmux_pane_has_claude_process(args.target_pane)):
         return []
 
     active_agent = agent_registry.active_agent_for_pane(args.target_pane)

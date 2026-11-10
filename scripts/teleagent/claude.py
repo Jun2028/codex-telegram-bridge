@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shlex
 import shutil
 import subprocess
@@ -56,6 +57,20 @@ def main() -> int:
               else "Claude Code availability check failed")
         return 2
     return 0
+
+
+def authentication_status() -> str:
+    """Read Claude's own account state without exposing account identifiers."""
+    binary = shutil.which(os.environ.get("TELEAGENT_CLAUDE_BIN", "claude"))
+    if not binary:
+        return "Claude Code CLI unavailable"
+    try:
+        result = subprocess.run([binary, "auth", "status"], capture_output=True,
+                                text=True, timeout=20)
+        data = json.loads(result.stdout)
+        return "Claude Code signed in" if result.returncode == 0 and data.get("loggedIn") else "Claude Code sign-in required"
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        return "Claude Code authentication check unavailable"
 
 
 def build_turn_command(binary: str, model: str, effort: str,

@@ -361,6 +361,8 @@ def relay_codex_control(target_pane: str, text: str, submit_delay: float) -> str
         return "not relayed: empty Codex control command"
     if not codex_target_ready(target_pane):
         return f"not relayed: tmux target not found: {target_pane}"
+    if tmux_pane_has_claude_process(target_pane):
+        return "not relayed: Codex slash controls and Goal mode are unavailable in native Claude Code"
 
     if not tmux_pane_has_codex_process(target_pane):
         current_command = tmux_pane_command(target_pane)

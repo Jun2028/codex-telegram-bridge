@@ -568,6 +568,8 @@ def main() -> int:
         return state
 
     def maintain_current_codex_usage() -> dict[str, Any]:
+        if _processes.tmux_pane_has_claude_process(args.target_pane):
+            return {}
         state = refresh_current_codex_usage()
         _usage.notify_codex_usage_failure(
             token,
@@ -895,6 +897,8 @@ def main() -> int:
         )
 
     def maintain_current_codex_auth() -> None:
+        if _processes.tmux_pane_has_claude_process(args.target_pane):
+            return
         refresh_current_codex_auth()
         notify_current_codex_auth_failure()
         reconcile_current_codex_reauth()
