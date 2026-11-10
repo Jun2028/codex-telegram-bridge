@@ -124,11 +124,24 @@ The relay also runs where bash and tmux are unavailable. It then starts and
 supervises the agent process itself instead of placing it in a tmux pane.
 
 ```bash
-python scripts/relay.py start    # listener in the background
+python scripts/relay.py start    # start whatever is not running, in the background
 python scripts/relay.py status
-python scripts/relay.py stop     # listener and agent
+python scripts/relay.py stop     # listener, agent and file browser
 python scripts/relay.py run      # listener in this terminal
+python scripts/relay.py autostart on   # Windows: keep it running
 ```
+
+`start` only starts what is missing, so it is safe to repeat. On Windows,
+`autostart on` adds a Task Scheduler entry that runs it at sign-in and every
+five minutes: the counterpart of the cron watchdog on Linux. It also makes the
+bot independent of the terminal or program that first started it; without it,
+a bot started from another program's session can stop when that session ends.
+`autostart off` removes the entry.
+
+With `TELEAGENT_FILES_TUNNEL="cloudflare"` in `config/relay.env`, `start` also
+keeps the [file browser](examples/telegram-file-browser/README.md) and a
+Cloudflare quick tunnel running, and registers the Files button again whenever
+the tunnel is issued a new address. It needs `node` and `cloudflared` on PATH.
 
 It needs Python 3.11 or newer with `requirements.txt` installed, the same
 `config/relay.env` and secret file as any other host, and the signed-in CLI of

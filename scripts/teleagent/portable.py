@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
+from pathlib import Path
 
 WINDOWS = os.name == "nt"
 
@@ -120,6 +122,26 @@ def stop_process(process: subprocess.Popen) -> None:
         terminate_tree(process.pid)
     else:
         process.terminate()
+
+
+def python_executable() -> str:
+    """The console interpreter, even when this process runs under the windowless one.
+
+    A process without a console gives every console program it starts a new,
+    visible terminal. Long-lived relay processes therefore run under the
+    console interpreter with a hidden console, which their children inherit.
+    """
+    executable = Path(sys.executable)
+    if WINDOWS and executable.name.lower() == "pythonw.exe":
+        console = executable.with_name("python.exe")
+        if console.exists():
+            return str(console)
+    return sys.executable
+
+
+def hidden_window_options() -> dict:
+    """`subprocess` options that keep a short-lived helper from flashing a terminal."""
+    return {"creationflags": subprocess.CREATE_NO_WINDOW} if WINDOWS else {}
 
 
 def detached_process_options() -> dict:

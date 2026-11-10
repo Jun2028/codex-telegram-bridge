@@ -77,7 +77,7 @@ async function createApp({ root, key, backupDir, readOnly = false, telegram = nu
     try {
       const url = new URL(req.url, 'http://localhost');
       if (url.pathname === '/health') return json(res, 200, { ok: true });
-      const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/style.css': ['style.css', 'text/css; charset=utf-8'] };
+      const assets = { '/': ['index.html', 'text/html; charset=utf-8'], '/app.js': ['app.js', 'text/javascript; charset=utf-8'], '/highlight.js': ['highlight.js', 'text/javascript; charset=utf-8'],'/style.css': ['style.css', 'text/css; charset=utf-8'] };
       if (req.method === 'GET' && assets[url.pathname]) {
         const [name, type] = assets[url.pathname];
         res.writeHead(200, { 'Content-Type': type });
@@ -159,7 +159,8 @@ async function createApp({ root, key, backupDir, readOnly = false, telegram = nu
       throw fail(405, 'Unsupported operation.');
     } catch (error) {
       const status = error.status || (error.code === 'ENOENT' ? 404 : error.code === 'EACCES' ? 403 : 500);
-      if (!res.headersSent) json(res, status, { error: status === 500 ? 'The file operation failed. Please refresh and try again.' : error.message });
+      if (!res.headersSent) json(res, status, { error: status === 500 ? 'The file operation failed. Please refresh and try again.'
+        : error.code === 'ENOENT' ? 'That file or folder is no longer there.' : error.code === 'EACCES' ? 'This machine does not allow reading that.' : error.message });
       else res.end();
     }
   });

@@ -124,7 +124,7 @@ def direct_runner_command(
     harness = _harnesses.without_terminal(_harnesses.for_model(model))
     agent_repo = os.environ.get("TELEAGENT_REPO") or str(repo_root)
     command = [
-        sys.executable, str(repo_root / "scripts" / harness.runner_script),
+        _portable.python_executable(), str(repo_root / "scripts" / harness.runner_script),
         "--model", model, "--repo", agent_repo,
         "--state-dir", str(agent_registry.telegram_log_dir()),
         "--codex-home", str(codex_home),

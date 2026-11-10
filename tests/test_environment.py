@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -124,6 +125,49 @@ class LauncherTests(unittest.TestCase):
             self.assertEqual(command[-2:], ["--max-final-message-chars", "900"])
             env["TELEAGENT_LOG_DIR"] = directory
             self.assertFalse(relay.relay_running(env))
+
+    def test_long_lived_processes_use_the_console_interpreter(self):
+        # Under the windowless interpreter, console programs the relay starts
+        # would each open a visible terminal.
+        self.assertEqual(portable.python_executable(), sys.executable)
+        with tempfile.TemporaryDirectory() as directory:
+            windowless = Path(directory) / "pythonw.exe"
+            windowless.write_text("")
+            (Path(directory) / "python.exe").write_text("")
+            with mock.patch.object(portable.sys, "executable", str(windowless)), \
+                 mock.patch.object(portable, "WINDOWS", True):
+                self.assertEqual(portable.python_executable(), str(Path(directory) / "python.exe"))
+                self.assertEqual(relay.listener_command(
+                    environment.build(Path(directory), {"HOME": directory}))[0],
+                    str(Path(directory) / "python.exe"))
+            with mock.patch.object(portable.sys, "executable", str(windowless)), \
+                 mock.patch.object(portable, "WINDOWS", False):
+                self.assertEqual(portable.python_executable(), str(windowless))
+
+    def test_autostart_task_runs_start_at_sign_in_and_every_five_minutes(self):
+        xml = relay.TASK_XML.format(user="PC\\me", command="C:\\py\\pythonw.exe",
+                                    arguments='"C:\\repo\\scripts\\relay.py" --instance main start')
+        for expected in ("<LogonTrigger>", "<Interval>PT5M</Interval>",
+                         "<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>",
+                         "<DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>",
+                         "<RunLevel>LeastPrivilege</RunLevel>", "--instance main start"):
+            self.assertIn(expected, xml)
+        if not portable.WINDOWS:
+            with tempfile.TemporaryDirectory() as directory:
+                env = environment.build(Path(directory), {"HOME": directory})
+                self.assertEqual(relay.autostart(env, "on"), 2)  # Linux has its cron watchdog.
+
+    def test_file_browser_upkeep_is_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = environment.build(Path(directory), {"HOME": directory})
+            with mock.patch.object(relay.host, "start") as start, \
+                 mock.patch.object(relay.host, "record") as record:
+                relay.ensure_file_browser(env)  # Not enabled: nothing is touched.
+                start.assert_not_called()
+                record.assert_not_called()
+            self.assertEqual(relay.file_browser_targets(env), ("tele-agent:files.0", "tele-agent:files-tunnel.0"))
+            self.assertTrue(relay.TUNNEL_ADDRESS.fullmatch("https://quiet-river-12.trycloudflare.com"))
+            self.assertFalse(relay.TUNNEL_ADDRESS.search("Requesting a tunnel on trycloudflare.com"))
 
     def test_host_kind_can_be_forced_and_defaults_by_platform(self):
         saved = os.environ.get("TELEAGENT_HOST")

@@ -1,31 +1,59 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="color-scheme" content="light dark"><title>Machine Files</title>
-  <link rel="stylesheet" href="/style.css"><script src="https://telegram.org/js/telegram-web-app.js" defer></script><script src="/app.js" defer></script>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Machine Files</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://telegram.org/js/telegram-web-app.js" defer></script>
+  <script src="/highlight.js" defer></script>
+  <script src="/app.js" defer></script>
 </head>
 <body>
-  <header class="topbar"><div class="brand-icon" aria-hidden="true">▤</div><div><h1>Machine Files</h1><p id="machine">Connecting to the demo folder…</p></div><span id="connection" class="connection">Connecting</span></header>
   <main>
-    <aside id="browser" aria-label="File browser">
-      <div class="browser-head"><span class="eyebrow">FILES ON THIS MACHINE</span><button id="refresh" class="icon-button" title="Refresh folder" aria-label="Refresh folder">↻</button></div>
-      <nav id="breadcrumbs" aria-label="Folder path"></nav>
-      <label class="search"><span aria-hidden="true">⌕</span><input id="filter" type="search" placeholder="Filter this folder" aria-label="Filter this folder"></label>
-      <div class="list-heading"><span>Name</span><span>Size</span></div>
+    <section id="browser" aria-label="Files">
+      <header class="bar">
+        <div class="where">
+          <p id="machine" class="machine">Connecting…</p>
+          <nav id="breadcrumbs" aria-label="Folder path"></nav>
+        </div>
+        <button id="refresh" class="icon-button" title="Refresh" aria-label="Refresh folder"></button>
+      </header>
+      <label class="search">
+        <span class="search-icon" aria-hidden="true"></span>
+        <input id="filter" type="search" placeholder="Filter this folder" aria-label="Filter this folder" autocomplete="off">
+      </label>
       <div id="file-list" role="list" aria-label="Files"></div>
-      <p id="file-count" class="muted"></p>
-      <div class="folder-note"><span class="green-dot"></span><div><strong>Real files, on disk</strong><p>Changes are saved to this PC’s demo folder.</p></div></div>
-    </aside>
-    <section id="workspace" aria-label="File preview and editor">
-      <div id="empty" class="empty"><div class="empty-icon">▤</div><h2>Your files, wherever you work.</h2><p>Open a folder, preview an image,<br>or edit a text file and save it to this machine.</p><button id="start-demo" class="primary">Open welcome.md <span aria-hidden="true">→</span></button><div class="hint">Browse · Preview · Edit · Save</div></div>
+      <p id="file-count" class="count"></p>
+    </section>
+
+    <section id="viewer" aria-label="File">
+      <div id="empty" class="placeholder"><p>Select a file to view it.</p></div>
       <div id="file-view" hidden>
-        <div class="editor-toolbar"><button id="back" class="icon-button" aria-label="Back to files">←</button><div class="file-title"><h2 id="file-name"></h2><p id="file-path"></p></div><button id="download" class="secondary">Download</button><button id="save" class="primary" disabled>Save changes</button></div>
+        <header class="bar file-bar">
+          <button id="back" class="icon-button" aria-label="Back to files"></button>
+          <div class="file-title">
+            <h2 id="file-name"></h2>
+            <p id="file-path"></p>
+          </div>
+          <button id="edit" class="button" hidden>Edit</button>
+          <button id="save" class="button primary" hidden disabled>Save</button>
+          <button id="download" class="icon-button" title="Download" aria-label="Download"></button>
+        </header>
         <div id="notice" role="status" hidden></div>
-        <div id="text-view" class="text-view"><pre id="line-numbers" aria-hidden="true"></pre><textarea id="editor" aria-label="File contents" spellcheck="false" wrap="off"></textarea></div>
-        <div id="image-view" class="image-view" hidden><img id="preview-image" alt="Selected file preview"></div>
-        <div id="binary-view" class="empty" hidden><h2>Download to open this file</h2><p>This file type has no preview in the demo.</p></div>
-        <footer class="editor-status"><span id="save-state">Saved on this machine</span><span id="file-details"></span><button id="reload" class="text-button">Reload from disk</button></footer>
+        <div id="code-view" class="code" tabindex="0">
+          <pre id="line-numbers" aria-hidden="true"></pre>
+          <pre id="code"></pre>
+        </div>
+        <textarea id="editor" aria-label="File contents" spellcheck="false" wrap="off" hidden></textarea>
+        <div id="image-view" class="image-view" hidden><img id="preview-image" alt=""></div>
+        <div id="binary-view" class="placeholder" hidden><p>No preview for this file type.<br>Download it to open it.</p></div>
+        <footer class="status">
+          <span id="save-state"></span>
+          <span id="file-details"></span>
+          <button id="reload" class="link">Reload</button>
+        </footer>
       </div>
     </section>
   </main>

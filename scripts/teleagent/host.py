@@ -228,7 +228,7 @@ def start(
     pane_env["PYTHONUTF8"] = "1"  # Session logs and prompts are UTF-8 on every OS.
     with open(directory / "pane.out", "ab") as output:
         pane = subprocess.Popen(
-            [sys.executable, "-m", "teleagent.direct_pane", "--dir", str(directory),
+            [portable.python_executable(), "-m", "teleagent.direct_pane", "--dir", str(directory),
              "--target", target, "--comm", process_comm, "--cwd", str(cwd), "--", *command],
             cwd=str(cwd),
             env=pane_env,

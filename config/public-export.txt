@@ -33,6 +33,7 @@ examples/telegram-file-browser/demo-files/figures/results.png
 examples/telegram-file-browser/demo-files/notes/meeting.md
 examples/telegram-file-browser/demo-files/welcome.md
 examples/telegram-file-browser/public/app.js
+examples/telegram-file-browser/public/highlight.js
 examples/telegram-file-browser/public/index.html
 examples/telegram-file-browser/public/style.css
 examples/telegram-file-browser/server.cjs
