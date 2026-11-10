@@ -35,7 +35,7 @@ agent_healthy() {
   )
   [ -n "$supervisor_pid" ] || return 1
   case "$(ps -o comm= --ppid "$supervisor_pid" 2>/dev/null || true)" in
-    codex|codex-agy|codex-dsh|codex-claude)
+    codex|ta-agy|ta-dsh|ta-claude|ta-codex)
       return 0
       ;;
   esac

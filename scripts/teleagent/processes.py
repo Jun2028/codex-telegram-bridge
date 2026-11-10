@@ -376,6 +376,12 @@ def relay_codex_control(target_pane: str, text: str, submit_delay: float) -> str
         return f"not relayed: tmux target not found: {target_pane}"
     if tmux_pane_has_claude_process(target_pane):
         return "not relayed: Codex slash controls and Goal mode are unavailable in native Claude Code"
+    running = tmux_pane_harness(target_pane)
+    if running is not None and not running.live_codex_controls:
+        return (
+            "not relayed: Codex slash controls and Goal mode need the Codex "
+            f"terminal interface, and this chat runs {running.label} without it"
+        )
 
     if not tmux_pane_has_codex_process(target_pane):
         current_command = tmux_pane_command(target_pane)

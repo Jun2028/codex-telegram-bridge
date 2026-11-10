@@ -56,12 +56,30 @@ locks, process checks and stopping a process tree.
 `scripts/relay.py` starts, stops and supervises the listener without bash.
 `teleagent/environment.py` computes the settings `relay_paths.sh` exports;
 `tests/test_environment.py` compares the two. `tests/test_direct_host.py` runs
-the listener against a direct-host agent and avoids every Unix-only call, so CI
-runs it on Windows and macOS as well.
+the listener against a direct-host agent for every provider and avoids every
+Unix-only call, so it runs on Windows and macOS as well as Linux.
 
-The direct host runs Claude Code. To add another harness there, give it a
-runner that reads its input from standard input and extend
-`lifecycle.direct_runner_command`.
+The direct host runs every provider through its runner. Codex runs there
+through `codex_exec_runner.py`, which drives `codex exec`, because its terminal
+interface needs a terminal; on a tmux host Codex keeps its terminal interface,
+with live model changes and Goal mode.
+
+## Runners
+
+A runner keeps one provider conversation alive. `teleagent/runner.py` holds
+everything runners share: the session log the listener reads, the input
+protocol, the serve loop and interruption. A provider's runner
+(`claude_agent_runner.py`, `codex_exec_runner.py`, `agy_agent_runner.py`,
+`dsh_agent_runner.py`) subclasses `AgentRunner` and supplies one method,
+`run_message`, which runs a single CLI turn and writes the answer.
+
+The input protocol is the same under tmux and under the direct host: a
+bracketed paste carries the message, Enter submits it, Escape interrupts the
+running turn, and Ctrl-U discards unsent text.
+
+`tests/live_providers.py` runs each provider's real CLI through the relay. The
+unit tests use stand-in CLIs, so run it on a machine to confirm a provider
+works there.
 
 ## Harnesses and commands
 
@@ -70,14 +88,20 @@ drives another provider's CLI (`claude_agent_runner.py`, `dsh_agent_runner.py`,
 `agy_agent_runner.py`). Every runner writes the same session JSONL, so
 submission checks, delivery and status do not depend on the provider.
 
-`teleagent/harnesses.py` is the single description of each harness. To add one:
+`teleagent/harnesses.py` is the single description of each harness. To add a
+provider:
 
-1. Add its entry to `harnesses.py` and a module for its CLI protocol.
-2. Add a runner that sets the entry's process name and writes the session JSONL.
-3. Teach `relay_paths.sh`, `codex_agent_supervisor.sh` and `start_codex_agent.sh`
-   its launch models and process name. Shell cannot import the table, so
-   `tests/test_harness_registry.py` fails when the two disagree.
-4. Add its files to `config/public-export.txt` when they are portable.
+1. Add its entry to `harnesses.py`, with its runner script and session file.
+2. Write its runner: subclass `AgentRunner` and implement `run_message`.
+3. Add its launch arguments to `lifecycle.direct_runner_command`, and its
+   models to `provider_commands.CHOICES` so `/switch` and the picker offer it.
+4. For tmux hosts, teach `relay_paths.sh`, `codex_agent_supervisor.sh` and
+   `start_codex_agent.sh` its launch models and process name. Shell cannot
+   import the table, so `tests/test_harness_registry.py` fails when the two
+   disagree.
+5. Add a stand-in CLI to `tests/test_direct_host.py` and an entry to
+   `tests/live_providers.py`.
+6. Add its files to `config/public-export.txt` when they are portable.
 
 Harness-specific launch validation still lives in `lifecycle.start_codex_agent`
 and `messages.parse_agent_launch_payload`.

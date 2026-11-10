@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import json
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,7 +12,7 @@ from urllib.parse import urlsplit
 from notify import redact
 
 from . import replies
-from . import messages, routing, state, status, transport
+from . import messages, provider_commands, routing, state, status, transport
 from .settings import SGT
 
 QUICK_COMMANDS = {"/start", "/help", "/ping", "/status", "/queue", "/cancel", "/models", "/files"}
@@ -33,7 +34,7 @@ class Command:
     same_as: str = ""  # The command this is another spelling of.
 
 
-PROVIDERS = "codex|claude|dsh|agy"
+PROVIDERS = provider_commands.PROVIDER_CHOICES
 COMMANDS: tuple[Command, ...] = (
     # Everyday work.
     Command("status", "Agent state and reply delivery", menu=True),
@@ -86,6 +87,7 @@ BUTTONS = {
         [
             {"text": "Refresh", "callback_data": "relay:status"},
             {"text": "Queue", "callback_data": "relay:queue"},
+            {"text": "Model", "callback_data": provider_commands.PICK},
             {"text": "Help", "callback_data": "relay:help"},
         ]
     ]
@@ -191,6 +193,51 @@ def models_text() -> str:
         "/start_agent and /restart_agent also take MODEL [LEVEL]; there "
         "Claude models are written cc-sonnet, cc-opus, cc-haiku."
     )
+
+
+def picker_keyboard(rows: provider_commands.Buttons) -> dict:
+    return {"inline_keyboard": [
+        [{"text": label, "callback_data": data} for label, data in row] for row in rows]}
+
+
+def _handle_picker(update, callback, action, args, token, owner_chat, owner_user,
+                   bot_username, member_cache) -> bool:
+    """Tap-to-select provider, model and effort.
+
+    Intermediate taps redraw the same message. The last tap becomes an ordinary
+    `/switch` message, so it takes the same authorization, queueing and
+    lifecycle path as a typed command; this function then returns False.
+    """
+    message = dict(callback.get("message") or {})
+    message["from"] = callback.get("from") or {}
+    message.pop("entities", None)
+    mention = f"@{bot_username}" if bot_username else ""
+    probe = {"update_id": update.get("update_id"), "message": {**message, "text": "/models" + mention}}
+    chat_id, _is_group, owner = routing.resolve_source_chat(
+        probe, owner_chat, owner_user, bot_username, token, member_cache)
+    try:
+        transport.telegram_api(token, "answerCallbackQuery", {"callback_query_id": callback.get("id")})
+    except RuntimeError:
+        pass  # An expired tap acknowledgement must not discard the choice.
+    if chat_id is None or not owner:
+        return True
+    step = provider_commands.picker([part for part in action.split(":")[1:] if part])
+    if isinstance(step, str):
+        message.pop("reply_markup", None)
+        message.update(text=f"/switch{mention} {step}", date=int(time.time()))
+        update.pop("callback_query", None)
+        update["message"] = message
+        return False
+    text, rows = step
+    try:
+        transport.telegram_api(token, "editMessageText", {
+            "chat_id": chat_id, "message_id": message.get("message_id"), "text": text,
+            "reply_markup": json.dumps(picker_keyboard(rows))})
+    except RuntimeError:
+        # The original message can no longer be edited; ask in a new one.
+        replies.send(args, token, chat_id, text, message_thread_id=message.get("message_thread_id"),
+                     reply_markup=picker_keyboard(rows))
+    return True
 
 
 def task_message(task: dict) -> dict:
@@ -368,6 +415,9 @@ def handle_quick_update(
     callback = update.get("callback_query")
     if isinstance(callback, dict):
         action = str(callback.get("data") or "")
+        if action.split(":")[0] == provider_commands.PICK:
+            return _handle_picker(update, callback, action, args, token, owner_chat,
+                                  owner_user, bot_username, member_cache)
         # Previously sent History buttons open the current queue.
         if action == "relay:history":
             action = "relay:queue"
@@ -444,6 +494,8 @@ def handle_quick_update(
         if file_url:
             reply += "\n\n/files opens the file browser inside Telegram."
     buttons = None
+    if command == "/models" and owner:
+        buttons = picker_keyboard(provider_commands.picker([])[1])
     if command in {"/status", "/help", "/start", "/queue", "/files"}:
         buttons = {"inline_keyboard": [*BUTTONS["inline_keyboard"]]}
         if file_url:

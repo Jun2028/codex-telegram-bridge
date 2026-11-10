@@ -273,6 +273,7 @@ def set_codex_model(
             "this chat runs the agy (Antigravity) harness; "
             "use /restart_agent NAME to start a fresh agy chat"
         )
+    _require_live_codex_controls(target_pane)
     if _settings.is_agy_model(selected_model):
         raise RuntimeError(
             "the agy (Antigravity) harness needs its own agent; "
@@ -327,6 +328,16 @@ def set_codex_model(
         raise
 
 
+def _require_live_codex_controls(target_pane: str) -> None:
+    """Live model and effort changes exist only in the interactive Codex TUI."""
+    running = _processes.tmux_pane_harness(target_pane)
+    if running is not None and not running.live_codex_controls:
+        raise RuntimeError(
+            f"this chat runs {running.label} without a live model switch; "
+            "use /switch PROVIDER MODEL LEVEL to change it with a fresh session"
+        )
+
+
 def set_codex_reasoning_effort(target_pane: str, effort: str) -> str:
     selected_effort = parse_live_reasoning_effort(effort)
     if not _processes.tmux_target_exists(target_pane):
@@ -345,6 +356,7 @@ def set_codex_reasoning_effort(target_pane: str, effort: str) -> str:
             "this chat runs the agy (Antigravity) harness; "
             "use /restart_agent NAME LEVEL to change model or reasoning"
         )
+    _require_live_codex_controls(target_pane)
     current = current_codex_model_and_reasoning_effort(target_pane)
     if current:
         validate_model_reasoning_effort(current[0], selected_effort)

@@ -918,7 +918,7 @@ def handle_update(
             args.target_pane = target_pane
             reply = (
                 f"{label} started in {target_pane} with "
-                f"model={native_model}, reasoning={reasoning_effort}. "
+                f"model={native_model}, reasoning={reasoning_effort or 'default'}. "
                 "This switch starts a fresh session."
             )
             record["action"] = action

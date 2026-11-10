@@ -72,7 +72,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error'
         for text in ["opus high extra", "unavailable", "sonnet none"]:
             with self.assertRaises(ValueError):
                 claude.parse_launch_payload(text)
-        self.assertEqual(registry.closest_codex_pids(1, [(1,0,'bash'),(2,1,'codex-claude')]), [2])
+        self.assertEqual(registry.closest_codex_pids(1, [(1,0,'bash'),(2,1,'ta-claude')]), [2])
 
     def test_stdin_final_once_and_exact_resume_after_runner_restart(self):
         agent = self.new_runner()

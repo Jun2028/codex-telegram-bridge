@@ -19,6 +19,7 @@ from . import state as _state
 from . import agy as _agy
 from . import dsh as _dsh
 from . import claude as _claude
+from . import environment as _environment
 from . import harnesses as _harnesses
 from . import host as _host
 from . import portable as _portable
@@ -115,24 +116,52 @@ class AgentStartUnconfirmed(RuntimeError):
 def direct_runner_command(
     repo_root: Path, model: str, reasoning_effort: str, agent_binary: str, codex_home: Path
 ) -> tuple[list[str], dict[str, str]]:
-    """The runner a direct host starts, as codex_agent_supervisor.sh starts it in tmux."""
-    harness = _harnesses.for_model(model)
-    if harness is not _harnesses.CLAUDE:
-        # The Codex TUI needs a terminal, and the DeepSeek Harness and
-        # Antigravity launch steps still live in the bash supervisor.
-        raise RuntimeError(
-            f"{harness.label} needs a tmux host on this machine; "
-            "without tmux, use /switch claude"
-        )
+    """The runner a direct host starts, as codex_agent_supervisor.sh starts it in tmux.
+
+    Returns the command and the extra environment the runner needs.
+    """
+    harness = _harnesses.without_terminal(_harnesses.for_model(model))
     agent_repo = os.environ.get("TELEAGENT_REPO") or str(repo_root)
     command = [
-        sys.executable, str(repo_root / "scripts" / "claude_agent_runner.py"),
-        "--model", model, "--effort", reasoning_effort or "high",
-        "--repo", agent_repo,
+        sys.executable, str(repo_root / "scripts" / harness.runner_script),
+        "--model", model, "--repo", agent_repo,
         "--state-dir", str(agent_registry.telegram_log_dir()),
         "--codex-home", str(codex_home),
     ]
-    return command, {harness.launch_binary_env: agent_binary}
+    if reasoning_effort:
+        command += ["--effort", reasoning_effort]
+    env = {harness.launch_binary_env: agent_binary}
+    if harness is _harnesses.CODEX_EXEC:
+        if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
+            # That Codex home is prepared by a bash script.
+            raise RuntimeError(
+                "DeepSeek through Codex needs a tmux host; without tmux, use /switch dsh"
+            )
+        if os.environ.get("TELEAGENT_CODEX_ACCESS_MODE", "full-access") != "full-access":
+            raise RuntimeError("Codex without tmux requires full-access mode")
+        command += ["--codex-bin", agent_binary]
+    elif harness is _harnesses.DSH:
+        dsh_home = _dsh.dsh_home()
+        env.update(_deepseek_key_environment(), DSH_HOME=str(dsh_home))
+        command[command.index("--codex-home") + 1] = str(dsh_home)
+        command += ["--dsh-home", str(dsh_home), "--dsh-bin", agent_binary]
+    elif harness is _harnesses.AGY:
+        env["CODEX_HOME"] = str(codex_home)
+        command += ["--agy-bin", _agy.agy_binary()]
+    return command, env
+
+
+def _deepseek_key_environment() -> dict[str, str]:
+    """Read the DeepSeek key file the way the bash supervisor sources it."""
+    key_file = os.environ.get("TELEAGENT_DS_KEY_FILE", "")
+    values: dict[str, str] = {}
+    if key_file:
+        _environment.read_env_file(Path(key_file).expanduser(), values)
+    key = values.get("DEEPSEEK_API_KEY") or values.get("OPENAI_API_KEY")
+    if not key:
+        raise RuntimeError("TELEAGENT_DS_KEY_FILE must point to a readable DeepSeek key file")
+    # The harness must use the DeepSeek key, never an ambient OpenAI one.
+    return {"DEEPSEEK_API_KEY": key, "OPENAI_API_KEY": "", "OPENAI_BASE_URL": ""}
 
 
 def _start_direct_agent(
@@ -147,7 +176,7 @@ def _start_direct_agent(
 ) -> tuple[str, str, dict[str, Any] | None]:
     """Start the agent as a process the relay manages, for hosts without tmux."""
     target_pane = f"{session}:{window}.0"
-    harness = _harnesses.for_model(model)
+    harness = _harnesses.without_terminal(_harnesses.for_model(model))
     command, env = direct_runner_command(
         repo_root, model, reasoning_effort, agent_binary, agent_codex_home
     )
@@ -170,7 +199,7 @@ def _start_direct_agent(
         _host.stop(target_pane)
         _settings.REGISTERED_CODEX_PID_CACHE.clear()
     # An explicit launch is a fresh conversation; crash restarts keep the session.
-    (agent_registry.telegram_log_dir() / "claude_session.json").unlink(missing_ok=True)
+    (agent_registry.telegram_log_dir() / harness.session_file).unlink(missing_ok=True)
     start_epoch = time.time()
     meta = agent_registry.create_agent(
         repo_root=repo_root,

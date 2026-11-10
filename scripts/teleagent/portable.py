@@ -108,6 +108,20 @@ def terminate_tree(pid: int) -> None:
             pass
 
 
+def stop_process(process: subprocess.Popen) -> None:
+    """Ask a child the caller started to end.
+
+    Windows CLIs are often a wrapper script around the real program, and
+    ending the wrapper leaves the program running, so the whole tree goes.
+    """
+    if process.poll() is not None:
+        return
+    if WINDOWS:
+        terminate_tree(process.pid)
+    else:
+        process.terminate()
+
+
 def detached_process_options() -> dict:
     """`subprocess.Popen` options for a process that outlives its starter."""
     if WINDOWS:

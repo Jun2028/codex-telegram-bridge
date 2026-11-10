@@ -14,8 +14,8 @@ from . import harnesses as _harnesses
 from . import messages as _messages
 from .harnesses import Harness
 
-PROVIDERS: dict[str, Harness] = {harness.key: harness for harness in _harnesses.ALL}
-PROVIDER_CHOICES = "codex|claude|dsh|agy"
+PROVIDERS: dict[str, Harness] = {harness.key: harness for harness in _harnesses.PROVIDERS}
+PROVIDER_CHOICES = "|".join(PROVIDERS)
 # Providers whose account the relay can inspect and sign in.
 ACCOUNT_PROVIDERS = (_harnesses.CODEX, _harnesses.CLAUDE)
 AUTH_ACTIONS = ("status", "login", "logout", "cancel")
@@ -24,6 +24,60 @@ SWITCH_COMMANDS = frozenset({"/switch", "/claude", "/dsh"})
 USAGE_HELP = "Use /usage [codex|claude]."
 AUTH_HELP = "Use /auth [codex|claude] [status|login|logout|cancel]."
 SWITCH_HELP = f"Use /switch {PROVIDER_CHOICES} [MODEL] [LEVEL]."
+
+
+# What the tap-to-select picker offers, in display order. Every combination must
+# parse as a /switch command; tests/test_harness_registry.py checks that.
+CHOICES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "codex": (("sol", "astra", "luna", "spark", "gpt-5.6-sol", "ds-flash", "ds-pro"),
+              ("low", "medium", "high", "xhigh", "max")),
+    "claude": (("sonnet", "opus", "haiku"), ("low", "medium", "high", "xhigh", "max")),
+    "dsh": (("flash", "pro"), ("off", "low", "high", "max")),
+    "agy": (("g-flash", "argon", "sonnet", "opus", "oss"),
+            ("default", "low", "medium", "high", "xhigh", "max")),
+}
+PICK = "pick"
+Buttons = list[list[tuple[str, str]]]
+
+
+def _rows(buttons: list[tuple[str, str]], width: int = 3) -> Buttons:
+    return [buttons[index:index + width] for index in range(0, len(buttons), width)]
+
+
+def picker(parts: list[str]) -> tuple[str, Buttons] | str:
+    """One step of choosing provider, model and effort by tapping.
+
+    `parts` is what has been chosen so far. Returns the next question with its
+    buttons as (label, callback data), or the finished `/switch` payload.
+    """
+    provider = PROVIDERS.get(parts[0]) if parts else None
+    if provider is None or provider.key not in CHOICES:
+        return "Choose a provider. Switching starts a fresh conversation.", _rows(
+            [(PROVIDERS[key].label, f"{PICK}:{key}") for key in CHOICES], width=2)
+    models, efforts = CHOICES[provider.key]
+    back = ("« Back", ":".join([PICK, *parts[:-1]]))
+    if len(parts) < 2 or parts[1] not in models:
+        return f"{provider.label}: choose a model.", _rows(
+            [(model, f"{PICK}:{provider.key}:{model}") for model in models]) + [[(back[0], PICK)]]
+    # Offer only the levels this model accepts.
+    efforts = tuple(effort for effort in efforts if _valid(provider.key, parts[1], effort))
+    if len(parts) < 3 or parts[2] not in efforts:
+        return f"{provider.label} {parts[1]}: choose the effort.", _rows(
+            [(effort, f"{PICK}:{provider.key}:{parts[1]}:{effort}") for effort in efforts]
+        ) + [[back]]
+    return _payload(provider.key, parts[1], parts[2])
+
+
+def _payload(provider: str, model: str, effort: str) -> str:
+    return " ".join(filter(None, [provider, model, "" if effort == "default" else effort]))
+
+
+def _valid(provider: str, model: str, effort: str) -> bool:
+    try:
+        parse_switch("/switch", _payload(provider, model, effort))
+    except ValueError:
+        return False
+    return True
 
 
 def resolve_account_command(command: str, payload: str, running: Harness) -> tuple[str, str]:

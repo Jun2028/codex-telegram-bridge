@@ -175,7 +175,7 @@ class DshSessionTests(unittest.TestCase):
         self.assertEqual(records[-1]["payload"]["type"], "task_complete")
 
     def test_registry_recognizes_dsh_runner(self) -> None:
-        rows = [(10, 1, "bash"), (11, 10, "codex-dsh"), (12, 11, "node")]
+        rows = [(10, 1, "bash"), (11, 10, "ta-dsh"), (12, 11, "node")]
         self.assertEqual(telegram_agent_registry.closest_codex_pids(10, rows), [11])
 
 

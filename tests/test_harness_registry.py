@@ -33,7 +33,7 @@ class HarnessRegistryTests(unittest.TestCase):
         # Shell cannot import the registry, so its literal lists are checked here.
         found = 0
         for name in ("start_codex_agent.sh", "ensure_telegram_relay.sh"):
-            for listed in re.findall(r"codex(?:\|codex-[a-z]+)+", (SCRIPTS / name).read_text()):
+            for listed in re.findall(r"codex(?:\|ta-[a-z]+)+", (SCRIPTS / name).read_text()):
                 found += 1
                 self.assertEqual(set(listed.split("|")), set(harnesses.PROCESS_COMMANDS), name)
         self.assertGreaterEqual(found, 3)
@@ -59,7 +59,15 @@ class HarnessRegistryTests(unittest.TestCase):
         self.assertIs(harnesses.for_model("dsh-flash"), harnesses.DSH)
         # Codex-backed DeepSeek provider models still run in the Codex harness.
         self.assertIs(harnesses.for_model("deepseek-flash"), harnesses.CODEX)
-        self.assertEqual([h.key for h in harnesses.ALL if h.uses_codex_auth], ["codex"])
+        self.assertEqual([h.key for h in harnesses.ALL if h.uses_codex_auth], ["codex", "codex-exec"])
+        # Codex without a terminal is the same provider in a different harness.
+        self.assertIs(harnesses.without_terminal(harnesses.CODEX), harnesses.CODEX_EXEC)
+        self.assertIs(harnesses.without_terminal(harnesses.CLAUDE), harnesses.CLAUDE)
+        self.assertNotIn(harnesses.CODEX_EXEC, harnesses.PROVIDERS)
+        for harness in harnesses.ALL:
+            if harness is not harnesses.CODEX:
+                self.assertTrue((ROOT / "scripts" / harness.runner_script).is_file(), harness.key)
+                self.assertTrue(harness.session_file, harness.key)
         self.assertEqual([h.key for h in harnesses.ALL if h.live_codex_controls], ["codex"])
         for harness in harnesses.ALL:
             self.assertIs(harnesses.for_process_comm(harness.process_comm), harness)
@@ -70,7 +78,7 @@ class HarnessRegistryTests(unittest.TestCase):
     def test_pane_harness_is_read_from_the_live_process_name(self):
         with tempfile.TemporaryDirectory() as directory:
             def comm(pid):
-                return {11: "bash", 12: "codex-claude"}[pid]
+                return {11: "bash", 12: "ta-claude"}[pid]
             real_read = Path.read_text
             def read(path, *a, **kw):
                 match = re.fullmatch(r"/proc/(\d+)/comm", str(path))
@@ -210,6 +218,71 @@ class ProviderCommandTests(unittest.TestCase):
                                  ("/auth", "sideways"), ("/auth", "claude login now")]:
             with self.assertRaises(ValueError):
                 resolve(command, payload, codex)
+
+    def test_picker_walks_provider_model_effort_and_ends_in_a_valid_switch(self):
+        picker = provider_commands.picker
+        text, rows = picker([])
+        self.assertEqual([data for row in rows for _label, data in row],
+                         ["pick:codex", "pick:claude", "pick:dsh", "pick:agy"])
+        self.assertEqual(rows[0][1][0], "Claude Code")
+        text, rows = picker(["claude"])
+        self.assertIn("choose a model", text)
+        self.assertIn(("opus", "pick:claude:opus"), rows[0])
+        self.assertEqual(rows[-1], [("« Back", "pick")])
+        text, rows = picker(["claude", "opus"])
+        self.assertIn(("max", "pick:claude:opus:max"), [b for row in rows for b in row])
+        self.assertEqual(rows[-1], [("« Back", "pick:claude")])
+        self.assertEqual(picker(["claude", "opus", "max"]), "claude opus max")
+        self.assertEqual(picker(["agy", "g-flash", "default"]), "agy g-flash")
+        # Unknown input falls back to the nearest valid question.
+        self.assertEqual(picker(["nobody"])[0], picker([])[0])
+        self.assertEqual(picker(["claude", "nothing"])[0], picker(["claude"])[0])
+        # Every button the picker can show leads to a command /switch accepts.
+        for provider, (models, _efforts) in provider_commands.CHOICES.items():
+            for model in models:
+                _text, rows = picker([provider, model])
+                offered = [data.split(":")[3] for row in rows[:-1] for _label, data in row]
+                self.assertTrue(offered, f"{provider} {model} offers no effort")
+                for effort in offered:
+                    payload = picker([provider, model, effort])
+                    self.assertIs(provider_commands.parse_switch("/switch", payload)[0],
+                                  provider_commands.PROVIDERS[provider])
+                for row in rows:
+                    for _label, data in row:
+                        self.assertLessEqual(len(data.encode()), 64)  # Telegram's limit.
+
+    def test_final_tap_becomes_an_ordinary_switch_message(self):
+        def tap(data, sender=123):
+            return {"update_id": 9, "callback_query": {
+                "id": "cb", "data": data, "from": {"id": sender},
+                "message": {"message_id": 5, "chat": {"id": 123, "type": "private"},
+                            "text": "Choose a provider.", "reply_markup": {"inline_keyboard": []}}}}
+        args = argparse.Namespace()
+        with mock.patch.object(ui.transport, "telegram_api") as api, \
+             mock.patch.object(ui.replies, "send") as send:
+            update = tap("pick:claude")
+            self.assertTrue(ui.handle_quick_update(update, args, "token", "123", "123", "OurBot", {}))
+            self.assertIn("callback_query", update)
+            methods = [call.args[1] for call in api.call_args_list]
+            self.assertEqual(methods, ["answerCallbackQuery", "editMessageText"])
+            edit = api.call_args_list[-1].args[2]
+            self.assertEqual((edit["chat_id"], edit["message_id"]), ("123", 5))
+            self.assertIn("pick:claude:opus", edit["reply_markup"])
+
+            update = tap("pick:claude:opus:max")
+            self.assertFalse(ui.handle_quick_update(update, args, "token", "123", "123", "OurBot", {}))
+            self.assertNotIn("callback_query", update)
+            self.assertEqual(update["message"]["text"], "/switch@OurBot claude opus max")
+            self.assertEqual(update["message"]["from"], {"id": 123})
+            self.assertNotIn("reply_markup", update["message"])
+
+            # Someone else's tap in the owner's chat changes nothing.
+            api.reset_mock()
+            update = tap("pick:claude:opus:max", sender=999)
+            update["callback_query"]["message"]["chat"] = {"id": -500, "type": "group"}
+            self.assertTrue(ui.handle_quick_update(update, args, "token", "123", "123", "OurBot", {}))
+            self.assertIn("callback_query", update)
+            send.assert_not_called()
 
     def test_switch_parses_every_provider_the_same_way(self):
         parse = provider_commands.parse_switch

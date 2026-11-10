@@ -43,7 +43,7 @@ new Telegram-specific command just to become a task.
 | `/queue` | Shows waiting work, pending receipts and delivery problems. |
 | `/cancel ID` | Removes a waiting message. `/cancel all` removes the queue visible here. |
 | `/interrupt NEW TASK` | Aborts the managed turn, verifies it stopped, then submits the replacement instruction. |
-| `/models` | Lists each provider's model names and example commands. |
+| `/models` | Lists each provider's models with buttons: tap a provider, a model, then an effort level to switch without typing. The Model button under `/status` opens the same picker. |
 | `/switch PROVIDER [MODEL] [LEVEL]` | Changes provider with a fresh session. `PROVIDER` is `codex`, `claude`, `dsh` or `agy`; for example `/switch claude opus max`. Defaults: Claude Sonnet/high, DeepSeek Harness Flash/max. |
 | `/usage [codex\|claude]` | Shows live usage limits in the owner's private chat. Without a provider it reports the running agent's. |
 | `/auth [codex\|claude] [status\|login\|logout\|cancel]` | Sign-in controls in the owner's private chat; plain `/auth` shows status. Claude login returns a browser link; send its one-time code with `/claude_code CODE`. Codex supports `status` and `login`. |
@@ -131,15 +131,35 @@ python scripts/relay.py run      # listener in this terminal
 ```
 
 It needs Python 3.11 or newer with `requirements.txt` installed, the same
-`config/relay.env` and secret file as any other host, and a signed-in `claude`
-CLI. This mode runs Claude Code: set `TELEAGENT_CODEX_MODEL="cc-sonnet"` in
-`config/relay.env` so the default agent is Claude. The Codex TUI, DeepSeek
-Harness and Antigravity need a tmux host. Claude sign-in from Telegram
-(`/auth claude login`) also needs a Unix host; sign in with the CLI instead.
+`config/relay.env` and secret file as any other host, and the signed-in CLI of
+each provider you want to use. Every provider runs in its own program: Claude
+Code through `claude`, Codex through `codex exec`, Antigravity through `agy`
+and DeepSeek Harness through `dsh`. Set `TELEAGENT_CODEX_MODEL` in
+`config/relay.env` to the default agent, for example `cc-sonnet`.
+
+What differs from a tmux host: Codex runs without its terminal interface, so
+it has no live `/model` or `/reasoning` change and no Goal mode (use `/switch`
+for a fresh session); DeepSeek through Codex (`ds-flash`, `ds-pro`) is
+unavailable; and Claude sign-in from Telegram (`/auth claude login`) needs a
+Unix host, so sign in with the CLI instead.
 
 A host with tmux uses it by default; `TELEAGENT_HOST=direct` or
-`TELEAGENT_HOST=tmux` chooses explicitly. Tested on Linux and Windows; the same
-tests run on macOS in CI. See [architecture](docs/architecture.md).
+`TELEAGENT_HOST=tmux` chooses explicitly. See [architecture](docs/architecture.md).
+
+## Check a machine with the real providers
+
+The automated tests use small stand-in programs in place of each provider's
+CLI, so they prove the relay, not the provider. To check that a provider really
+works on a machine:
+
+```bash
+python tests/live_providers.py                # every installed provider
+python tests/live_providers.py claude codex   # only these
+```
+
+It starts each provider through the relay's own handlers, sends one message,
+then a follow-up that only succeeds if the provider kept its conversation.
+Telegram is not contacted; each run spends a little of that provider's quota.
 
 ## Private host configuration
 

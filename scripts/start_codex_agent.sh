@@ -219,7 +219,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
         | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
         || true
     )"
-    if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy|codex-dsh|codex-claude' >/dev/null; then
+    if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|ta-agy|ta-dsh|ta-claude|ta-codex' >/dev/null; then
       AGENT_LAUNCH_HEALTHY=1
       break
     fi
@@ -288,14 +288,14 @@ SUPERVISOR_PID="$(
     | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
     || true
 )"
-if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy|codex-dsh|codex-claude' >/dev/null; }; then
+if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|ta-agy|ta-dsh|ta-claude|ta-codex' >/dev/null; }; then
   AGENT_COMMAND="codex"
   if tele_agent_is_claude_model "$CODEX_MODEL"; then
-    AGENT_COMMAND="codex-claude"
+    AGENT_COMMAND="ta-claude"
   elif tele_agent_is_dsh_model "$CODEX_MODEL"; then
-    AGENT_COMMAND="codex-dsh"
+    AGENT_COMMAND="ta-dsh"
   elif tele_agent_is_agy_model "$CODEX_MODEL"; then
-    AGENT_COMMAND="codex-agy"
+    AGENT_COMMAND="ta-agy"
   fi
   echo "session=$SESSION window=$WINDOW pane=0 cmd=$AGENT_COMMAND supervised=yes model=$CODEX_MODEL reasoning=$CODEX_REASONING_EFFORT"
 else

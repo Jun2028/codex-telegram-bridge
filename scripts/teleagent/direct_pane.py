@@ -102,7 +102,7 @@ def run(directory: Path, target: str, comm: str, cwd: str, command: list[str]) -
             while child.poll() is None:
                 if stop_path.exists():
                     stopping = True
-                    child.terminate()
+                    portable.stop_process(child)
                     try:
                         child.wait(timeout=8)
                     except subprocess.TimeoutExpired:

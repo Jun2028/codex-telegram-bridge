@@ -41,6 +41,7 @@ scripts/app_image_gen.py
 scripts/agy_agent_runner.py
 scripts/claude_agent_runner.py
 scripts/claude_auth_worker.py
+scripts/codex_exec_runner.py
 scripts/bootstrap_new_machine.sh
 scripts/check.sh
 scripts/check_deepseek_provider.py
@@ -90,6 +91,7 @@ scripts/teleagent/provider_commands.py
 scripts/teleagent/queue.py
 scripts/teleagent/replies.py
 scripts/teleagent/routing.py
+scripts/teleagent/runner.py
 scripts/teleagent/schedule.py
 scripts/teleagent/service.py
 scripts/teleagent/sessions.py
@@ -115,6 +117,7 @@ tests/test_claude_accounts.py
 tests/test_harness_registry.py
 tests/test_direct_host.py
 tests/test_environment.py
+tests/live_providers.py
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
 tests/test_codex_reset_api.py

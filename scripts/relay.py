@@ -24,7 +24,7 @@ from pathlib import Path
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 
-from teleagent import environment, host, portable  # noqa: E402
+from teleagent import environment, harnesses, host, portable  # noqa: E402
 
 QUICK_EXIT_SECONDS = 300
 
@@ -162,7 +162,8 @@ def status(env: dict[str, str]) -> int:
     agent = host.record(agent_target(env))
     print(f"bot: {env['TELEAGENT_INSTANCE']}")
     print(f"listener: {'running' if relay_running(env) else 'stopped'}")
-    print(f"agent: {agent.get('process_comm') if agent else 'stopped'}")
+    running = harnesses.for_process_comm(str(agent.get("process_comm"))) if agent else None
+    print(f"agent: {running.label if running else 'running' if agent else 'stopped'}")
     print(f"logs: {env['TELEAGENT_LOG_DIR']}")
     return 0
 

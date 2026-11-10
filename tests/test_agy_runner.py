@@ -23,25 +23,6 @@ from teleagent import sessions as _sessions  # noqa: E402
 from teleagent import settings as _settings  # noqa: E402
 
 
-class MessageAssemblerTests(unittest.TestCase):
-    def test_burst_submits_once_idle(self) -> None:
-        assembler = agy_agent_runner.MessageAssembler()
-        assembler.feed("line one")
-        assembler.feed("line two")
-        self.assertEqual(assembler.take(), "line one\nline two")
-
-    def test_embedded_blank_line_is_message_content(self) -> None:
-        assembler = agy_agent_runner.MessageAssembler()
-        assembler.feed("para one")
-        assembler.feed("")
-        assembler.feed("para two")
-        self.assertEqual(assembler.take(), "para one\n\npara two")
-
-    def test_take_returns_none_without_input(self) -> None:
-        assembler = agy_agent_runner.MessageAssembler()
-        self.assertIsNone(assembler.take())
-
-
 class SessionLogTests(unittest.TestCase):
     def test_records_are_forwarded_and_readable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,7 +71,7 @@ class AgyModelValidationTests(unittest.TestCase):
             telegram_inbox.parse_agent_launch_payload("g-flash minimal")
 
     def test_registry_treats_codex_agy_as_process_layer(self) -> None:
-        rows = [(10, 1, "bash"), (11, 10, "codex-agy"), (12, 11, "python3")]
+        rows = [(10, 1, "bash"), (11, 10, "ta-agy"), (12, 11, "python3")]
         self.assertEqual(telegram_agent_registry.closest_codex_pids(10, rows), [11])
 
 

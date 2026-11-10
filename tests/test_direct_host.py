@@ -1,7 +1,8 @@
 """The direct host: an agent the relay manages itself, with no tmux and no /proc.
 
 These tests avoid every Unix-only call so the same file runs on Linux, macOS
-and Windows. The Claude CLI is a deterministic fixture; Telegram is captured.
+and Windows. Each provider CLI is a deterministic fixture and Telegram is
+captured; `tests/live_providers.py` runs the same flow against the real CLIs.
 """
 from __future__ import annotations
 
@@ -21,18 +22,54 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from teleagent import direct_pane, host, portable
 
-FAKE_CLAUDE = '''import json, sys, time, uuid
-args = sys.argv[1:]
-if args == ["auth", "status"]:
-    print(json.dumps({"loggedIn": True})); raise SystemExit(0)
-text = sys.stdin.buffer.read().decode("utf-8")
-sid = args[args.index("--resume") + 1] if "--resume" in args else str(uuid.uuid4())
-print(json.dumps({"type": "system", "subtype": "init", "session_id": sid, "model": "claude-fixture"}), flush=True)
-if "WAIT" in text:
-    time.sleep(60)
-print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "session_id": sid,
-                  "result": "DIRECT_OK"}), flush=True)
+# One fixture stands in for every provider CLI; its first argument names which.
+FAKE_CLI = '''import json, sys, time, uuid
+name, args = sys.argv[1], sys.argv[2:]
+def emit(value):
+    print(json.dumps(value), flush=True)
+def wait(text):
+    if "WAIT" in text:
+        time.sleep(60)
+if name == "claude":
+    if args == ["auth", "status"]:
+        emit({"loggedIn": True}); raise SystemExit(0)
+    text = sys.stdin.buffer.read().decode("utf-8")
+    sid = args[args.index("--resume") + 1] if "--resume" in args else str(uuid.uuid4())
+    emit({"type": "system", "subtype": "init", "session_id": sid, "model": "claude-fixture"})
+    wait(text)
+    emit({"type": "result", "subtype": "success", "is_error": False, "session_id": sid, "result": "DIRECT_OK"})
+elif name == "codex":
+    assert args[0] == "exec" and args[-1] == "-" and "--json" in args, args
+    text = sys.stdin.buffer.read().decode("utf-8")
+    sid = args[2] if args[1] == "resume" else str(uuid.uuid4())
+    emit({"type": "thread.started", "thread_id": sid})
+    emit({"type": "item.completed", "item": {"type": "error", "message": "configuration notice"}})
+    emit({"type": "turn.started"})
+    wait(text)
+    emit({"type": "item.completed", "item": {"type": "agent_message", "text": "working on it"}})
+    emit({"type": "item.completed", "item": {"type": "agent_message", "text": "DIRECT_OK"}})
+    emit({"type": "turn.completed", "usage": {}})
+elif name == "agy":
+    text = args[args.index("-p") + 1]
+    cid = args[args.index("--conversation") + 1] if "--conversation" in args else str(uuid.uuid4())
+    emit({"event": "init", "conversation_id": cid})
+    wait(text)
+    emit({"event": "result", "result": {"status": "SUCCESS", "response": "DIRECT_OK", "conversation_id": cid}})
+elif name == "dsh":
+    assert "--json" in args and args[-1] == "-", args
+    text = sys.stdin.buffer.read().decode("utf-8")
+    sid = args[args.index("--session-id") + 1] if "--session-id" in args else str(uuid.uuid4())
+    emit({"type": "session", "sessionId": sid})
+    wait(text)
+    emit({"type": "final", "text": "DIRECT_OK"})
 '''
+# How each provider is started from Telegram, and the name its harness reports.
+PROVIDERS = {
+    "claude": ("/switch claude sonnet low", "ta-claude"),
+    "codex": ("/switch codex luna low", "ta-codex"),
+    "agy": ("/switch agy gemini-fixture", "ta-agy"),
+    "dsh": ("/switch dsh flash low", "ta-dsh"),
+}
 
 
 def wait_for(check, label, seconds=30):
@@ -45,16 +82,17 @@ def wait_for(check, label, seconds=30):
     raise AssertionError("Timed out: " + label)
 
 
-def install_fake_claude(directory: Path) -> str:
-    """Write the fixture CLI and return a path `shutil.which` accepts on this OS."""
-    script = directory / "fake_claude.py"
-    script.write_text(FAKE_CLAUDE, encoding="utf-8")
+def install_fake_cli(directory: Path, name: str) -> str:
+    """Write a fixture CLI named like the real one; return a path `shutil.which` accepts."""
+    script = directory / "fake_cli.py"
+    script.write_text(FAKE_CLI, encoding="utf-8")
     if portable.WINDOWS:
-        launcher = directory / "claude.cmd"
-        launcher.write_text(f'@"{sys.executable}" "{script}" %*\r\n', encoding="utf-8")
+        launcher = directory / f"{name}.cmd"
+        launcher.write_text(f'@"{sys.executable}" "{script}" {name} %*\r\n', encoding="utf-8")
     else:
-        launcher = directory / "claude"
-        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" "$@"\n', encoding="utf-8")
+        launcher = directory / name
+        launcher.write_text(f'#!/bin/sh\nexec "{sys.executable}" "{script}" {name} "$@"\n',
+                            encoding="utf-8")
         launcher.chmod(0o755)
     return str(launcher)
 
@@ -107,13 +145,13 @@ class DirectPaneTests(unittest.TestCase):
                 f"out = open({str(received)!r}, 'ab', buffering=0)\n"
                 "while True:\n    b = sys.stdin.buffer.read(1)\n    if not b: break\n    out.write(b)\n")
         host.start("t:agent.0", [sys.executable, "-c", echo], cwd=self.root, env={},
-                   process_comm="codex-claude")
+                   process_comm="ta-claude")
         found = host.record("t:agent.0")
-        self.assertEqual(found["process_comm"], "codex-claude")
+        self.assertEqual(found["process_comm"], "ta-claude")
         rows = wait_for(lambda: len(host.process_rows()) == 2 and host.process_rows(), "runner row")
         self.assertEqual(rows[0][2], host.PANE_PROCESS_NAME)
-        self.assertEqual((rows[1][1], rows[1][2]), (found["pane_pid"], "codex-claude"))
-        self.assertEqual(host.process_comm(rows[1][0]), "codex-claude")
+        self.assertEqual((rows[1][1], rows[1][2]), (found["pane_pid"], "ta-claude"))
+        self.assertEqual(host.process_comm(rows[1][0]), "ta-claude")
         self.assertTrue(host.process_start(rows[1][0]))
         wait_for(lambda: "runner ready" in host.tail("t:agent.0"), "runner output")
         host.send_keys("t:agent.0", "C-u")
@@ -144,134 +182,178 @@ class DirectPaneTests(unittest.TestCase):
         directory.mkdir(parents=True)
         (directory / "input.jsonl").write_text(json.dumps({"text": "OLD"}) + "\n")
         host.start("t:agent.0", [sys.executable, "-c", crash_once], cwd=self.root, env={},
-                   process_comm="codex-claude")
+                   process_comm="ta-claude")
         wait_for(lambda: marker.exists() and marker.read_text() == "2", "restart after a crash", 20)
         host.send_keys("t:agent.0", "NEW", literal=True)
         wait_for(lambda: (self.root / "got").exists(), "input after restart")
         self.assertEqual((self.root / "got").read_bytes(), b"NEW")
 
 
-def scenario(root: Path) -> None:
-    """Drive the listener's own handlers against a direct-host Claude agent."""
-    import telegram_agent_registry as registry
-    from teleagent import commands, delivery, messages, processes, submission, transport
-    repo, runtime, home = root / "repo", root / "runtime", root / "rollouts"
-    repo.mkdir(); runtime.mkdir()
-    # The agent's working repository carries the relay scripts, as a deployment does.
-    # A copy, not a link: creating links needs extra rights on Windows.
-    shutil.copytree(ROOT / "scripts", repo / "scripts",
-                    ignore=shutil.ignore_patterns("__pycache__"))
-    (repo / "AGENTS.md").write_text("Follow only the test request.\n", encoding="utf-8")
-    args = argparse.Namespace(
-        repo_root=repo, session="direct-test", codex_window="codex",
-        target_pane="direct-test:codex.0", submit_delay=0.2, relay_mode="tmux-enter",
-        allow_shell_pane=False, bridge_ack=False, max_log_chars=4000, tmux_lines=30,
-        agent_recovery_wait=3, agent_watchdog=True,
-        codex_usage_state_path=str(runtime / "usage.json"),
-        codex_reset_state_path=str(runtime / "reset.json"),
-        codex_auth_state_path=str(runtime / "auth.json"),
-        agent_lifecycle_state_path=str(runtime / "life.json"),
-        relay_confirmation_state_path=str(runtime / "pending.json"),
-        relay_queue_state_path=str(runtime / "queue.json"),
-        agent_message_state_path=str(runtime / "messages.json"))
-    routes, log, sent, counter = runtime / "routes.json", runtime / "listener.jsonl", [], [0]
+class Relay:
+    """The listener's own handlers, with Telegram captured, for one bot runtime."""
 
-    def receive(text):
-        counter[0] += 1
-        update = {"update_id": counter[0], "message": {
-            "message_id": counter[0], "date": int(time.time()),
+    def __init__(self, root: Path) -> None:
+        import telegram_agent_registry as registry
+        from teleagent import commands, delivery, transport
+        self.registry, self.commands, self.delivery = registry, commands, delivery
+        self.repo, self.runtime, self.home = root / "repo", root / "runtime", root / "rollouts"
+        self.repo.mkdir(exist_ok=True)
+        self.runtime.mkdir(exist_ok=True)
+        # The agent's working repository carries the relay scripts, as a deployment
+        # does. A copy, not a link: creating links needs extra rights on Windows.
+        shutil.copytree(ROOT / "scripts", self.repo / "scripts",
+                        ignore=shutil.ignore_patterns("__pycache__"))
+        (self.repo / "AGENTS.md").write_text("Follow only the test request.\n", encoding="utf-8")
+        state = lambda name: str(self.runtime / name)  # noqa: E731
+        self.args = argparse.Namespace(
+            repo_root=self.repo, session="direct-test", codex_window="codex",
+            target_pane="direct-test:codex.0", submit_delay=0.2, relay_mode="tmux-enter",
+            allow_shell_pane=False, bridge_ack=False, max_log_chars=4000, tmux_lines=30,
+            agent_recovery_wait=3, agent_watchdog=True,
+            codex_usage_state_path=state("usage.json"), codex_reset_state_path=state("reset.json"),
+            codex_auth_state_path=state("auth.json"), agent_lifecycle_state_path=state("life.json"),
+            relay_confirmation_state_path=state("pending.json"),
+            relay_queue_state_path=state("queue.json"), agent_message_state_path=state("messages.json"))
+        self.sent: list[str] = []
+        self.count = 0
+        self.patch = mock.patch.object(
+            transport, "send_reply", side_effect=lambda *a, **kw: self.sent.append(str(a[2])))
+
+    def receive(self, text: str) -> dict:
+        self.count += 1
+        update = {"update_id": self.count, "message": {
+            "message_id": self.count, "date": int(time.time()),
             "chat": {"id": "123", "type": "private"}, "from": {"id": 123}, "text": text}}
-        return commands.handle_update(update, args, {}, "offline", "123", log, route_state_path=routes)
+        return self.commands.handle_update(update, self.args, {}, "offline", "123",
+                                           self.runtime / "listener.jsonl",
+                                           route_state_path=self.runtime / "routes.json") or {}
 
-    def metadata():
-        meta = registry.active_agent_for_pane(args.target_pane)
+    def metadata(self):
+        meta = self.registry.active_agent_for_pane(self.args.target_pane)
         if meta:
-            meta = registry.refresh_codex_session_link(meta, target_pane=args.target_pane)
+            meta = self.registry.refresh_codex_session_link(meta, target_pane=self.args.target_pane)
             if meta.get("codex_session_path"):
                 return meta
         return None
 
-    def records():
-        meta = metadata()
+    def records(self) -> list[dict]:
+        meta = self.metadata()
         if not meta:
             return []
         lines = Path(meta["codex_session_path"]).read_text(encoding="utf-8").splitlines()
         return [json.loads(line) for line in lines]
 
-    def last_event():
-        rows = records()
+    def last_event(self):
+        rows = self.records()
         return rows[-1].get("payload", {}).get("type") if rows else None
 
-    def reply():
-        return str(sent[-1][0][2])
+    def forwarded(self) -> list[str]:
+        """Deliver new agent messages as the listener would; return what was sent."""
+        before = len(self.sent)
+        self.delivery.drain_codex_agent_messages(
+            "offline", "123", self.metadata(), self.runtime / "messages.json", None, {},
+            sessions_root=self.home, route_state_path=self.runtime / "routes.json")
+        return self.sent[before:]
 
-    with mock.patch.object(transport, "send_reply", side_effect=lambda *a, **kw: sent.append((a, kw))):
+
+def scenario(root: Path, provider: str) -> None:
+    """Drive one provider's direct-host agent through the listener's own handlers."""
+    from teleagent import processes, submission
+    launch, process_name = PROVIDERS[provider]
+    relay = Relay(root)
+    with relay.patch:
         try:
-            receive("/switch claude sonnet low")
-            assert "Claude Code started" in reply(), reply()
-            wait_for(metadata, "session registration")
-            assert processes.tmux_pane_has_claude_process(args.target_pane)
-            record = receive("Reply with exactly DIRECT_OK.\nSecond line stays in one message.")
+            relay.receive(launch)
+            assert "started in" in relay.sent[-1], relay.sent[-1]
+            wait_for(relay.metadata, "session registration")
+            assert processes.tmux_pane_command(relay.args.target_pane) == process_name
+            record = relay.receive("Reply with exactly DIRECT_OK.\nSecond line stays in one message.")
             assert "submission confirmed" in record.get("relay_result", ""), record.get("relay_result")
-            users = [r["payload"]["content"][0]["text"] for r in records()
+            users = [r["payload"]["content"][0]["text"] for r in relay.records()
                      if r.get("type") == "response_item" and r.get("payload", {}).get("role") == "user"]
             assert len(users) == 1 and "Second line stays in one message." in users[0], users
-            wait_for(lambda: last_event() == "task_complete", "first reply")
-            before = len(sent)
-            delivery.drain_codex_agent_messages("offline", "123", metadata(), runtime / "messages.json",
-                                                None, {}, sessions_root=home, route_state_path=routes)
-            assert any("DIRECT_OK" in str(item[0][2]) for item in sent[before:]), "reply was not forwarded"
-            receive("/status")
-            assert "idle" in reply(), reply()
-            print("PASS start, multiline submit, reply forwarding, idle status", flush=True)
+            wait_for(lambda: relay.last_event() == "task_complete", "first reply")
+            sent = relay.forwarded()
+            assert any("DIRECT_OK" in text for text in sent), sent
+            assert not any("configuration notice" in text for text in sent), sent
+            relay.receive("/status")
+            assert "idle" in relay.sent[-1], relay.sent[-1]
+            print(f"PASS {provider}: start, multiline submit, reply forwarding, idle status", flush=True)
 
-            receive("WAIT then reply")
-            wait_for(lambda: submission.codex_session_turn_active(Path(metadata()["codex_session_path"])),
-                     "active turn")
-            receive("/status")
-            assert "working" in reply(), reply()
-            record = receive("/interrupt Reply with exactly DIRECT_OK.")
+            relay.receive("WAIT then reply")
+            wait_for(lambda: submission.codex_session_turn_active(
+                Path(relay.metadata()["codex_session_path"])), "active turn")
+            relay.receive("/status")
+            assert "working" in relay.sent[-1], relay.sent[-1]
+            record = relay.receive("/interrupt Reply with exactly DIRECT_OK.")
             assert record["action"] == "interrupt", record
-            wait_for(lambda: last_event() == "task_complete", "replacement reply")
-            assert any(r.get("payload", {}).get("type") == "turn_aborted" for r in records())
-            print("PASS working status, interrupt, replacement instruction", flush=True)
+            wait_for(lambda: relay.last_event() == "task_complete", "replacement reply")
+            assert any(r.get("payload", {}).get("type") == "turn_aborted" for r in relay.records())
+            print(f"PASS {provider}: working status, interrupt, replacement instruction", flush=True)
 
-            receive("/kill_agent")
-            assert "Stopped" in reply(), reply()
-            assert host.record(args.target_pane) is None
-            receive("/switch codex")
-            assert "needs a tmux host" in reply() or "codex CLI not found" in reply(), reply()
-            print("PASS stop, and a clear refusal for a harness that needs tmux", flush=True)
+            relay.receive("/model sol")
+            assert "not confirmed" in relay.sent[-1], relay.sent[-1]
+            relay.receive("/kill_agent")
+            assert "Stopped" in relay.sent[-1], relay.sent[-1]
+            assert host.record(relay.args.target_pane) is None
+            print(f"PASS {provider}: live Codex controls refused, agent stopped", flush=True)
         finally:
-            host.stop(args.target_pane)
+            host.stop(relay.args.target_pane)
+
+
+def relay_environment(root: Path, cli_directory: Path | None) -> dict[str, str]:
+    """An isolated bot runtime on the direct host; fixture CLIs when a directory is given."""
+    env = dict(os.environ)
+    for name in [key for key in env if key.startswith(("TELEAGENT_", "TMUX"))]:
+        env.pop(name)
+    key_file = root / "deepseek.env"
+    env.update(
+        TELEAGENT_HOST="direct", TELEAGENT_REPO=str(root / "repo"),
+        TELEAGENT_SCRATCH=str(root / "scratch"), TELEAGENT_LOG_DIR=str(root / "runtime"),
+        TELEAGENT_CODEX_HOME=str(root / "rollouts"), TELEAGENT_DSH_HOME=str(root / "dsh-home"),
+        TELEAGENT_AGENT_DIR=str(root / "runtime" / "agents"), TELEAGENT_INSTANCE="main",
+        TELEAGENT_PERSONALITY_FILE=str(root / "absent-personality"),
+        TELEAGENT_SECRET_ENV=str(root / "absent-secrets"),
+        TELEAGENT_CODEX_ACCESS_MODE="full-access", PYTHONUTF8="1")
+    if cli_directory is not None:
+        key_file.write_text("DEEPSEEK_API_KEY=fixture-key\n", encoding="utf-8")
+        launchers = {name: install_fake_cli(cli_directory, name) for name in PROVIDERS}
+        env.update(TELEAGENT_CLAUDE_BIN=launchers["claude"], TELEAGENT_AGY_BIN=launchers["agy"],
+                   TELEAGENT_DSH_BIN=launchers["dsh"], TELEAGENT_DS_KEY_FILE=str(key_file),
+                   PATH=str(cli_directory) + os.pathsep + env.get("PATH", ""))
+    return env
 
 
 class DirectHostRelayTests(unittest.TestCase):
-    def test_listener_drives_claude_without_tmux(self):
+    """Every provider runs through the same listener, host and input protocol."""
+
+    def run_provider(self, provider: str) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            env = dict(os.environ)
-            for name in [key for key in env if key.startswith(("TELEAGENT_", "TMUX"))]:
-                env.pop(name)
-            env.update(
-                TELEAGENT_HOST="direct", TELEAGENT_CLAUDE_BIN=install_fake_claude(root),
-                TELEAGENT_REPO=str(root / "repo"), TELEAGENT_SCRATCH=str(root / "scratch"),
-                TELEAGENT_LOG_DIR=str(root / "runtime"), TELEAGENT_CODEX_HOME=str(root / "rollouts"),
-                TELEAGENT_AGENT_DIR=str(root / "runtime" / "agents"), TELEAGENT_INSTANCE="main",
-                TELEAGENT_PERSONALITY_FILE=str(root / "absent-personality"),
-                TELEAGENT_SECRET_ENV=str(root / "absent-secrets"),
-                TELEAGENT_CODEX_ACCESS_MODE="full-access", PYTHONUTF8="1",
-                # Prove nothing reaches for tmux: an empty PATH entry would hide it,
-                # so make any tmux call fail loudly instead.
-                TMUX="")
-            result = subprocess.run([sys.executable, __file__, "--scenario", str(root)], env=env,
-                                    text=True, capture_output=True, timeout=240)
+            (root / "cli").mkdir()
+            result = subprocess.run(
+                [sys.executable, __file__, "--scenario", str(root), provider],
+                env=relay_environment(root, root / "cli"), text=True, capture_output=True,
+                timeout=240)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            self.assertEqual(result.stdout.count("PASS"), 3, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.count(f"PASS {provider}:"), 3,
+                             result.stdout + result.stderr)
+
+    def test_claude_code(self):
+        self.run_provider("claude")
+
+    def test_codex_without_its_terminal_interface(self):
+        self.run_provider("codex")
+
+    def test_antigravity(self):
+        self.run_provider("agy")
+
+    def test_deepseek_harness(self):
+        self.run_provider("dsh")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--scenario":
-        scenario(Path(sys.argv[2]))
+    if len(sys.argv) == 4 and sys.argv[1] == "--scenario":
+        scenario(Path(sys.argv[2]), sys.argv[3])
     else:
         unittest.main()

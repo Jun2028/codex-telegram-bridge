@@ -188,7 +188,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':False,'session_
         old=Path(metadata()['codex_session_path'])
         pane_pid=registry.tmux_pane_pid(args.target_pane)
         pids=[pid for pid in registry.descendants(pane_pid)
-              if Path(f'/proc/{pid}/comm').read_text().strip()=='codex-claude']
+              if Path(f'/proc/{pid}/comm').read_text().strip()=='ta-claude']
         assert len(pids)==1
         os.kill(pids[0],signal.SIGKILL)
         wait_for(lambda: metadata() and Path(metadata()['codex_session_path'])!=old,'supervisor recovery')
