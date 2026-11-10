@@ -101,7 +101,7 @@ def install_fake_cli(directory: Path, name: str) -> str:
 
 class PortableTests(unittest.TestCase):
     def test_lock_excludes_a_second_holder_and_releases(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             path = Path(directory) / "x.lock"
             first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
             second = os.open(path, os.O_RDWR)
@@ -131,7 +131,7 @@ class PortableTests(unittest.TestCase):
 
 class DirectPaneTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name)
         env = mock.patch.dict(os.environ, TELEAGENT_HOST="direct", TELEAGENT_LOG_DIR=str(self.root))
@@ -332,7 +332,7 @@ class DirectHostRelayTests(unittest.TestCase):
     """Every provider runs through the same listener, host and input protocol."""
 
     def run_provider(self, provider: str) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             (root / "cli").mkdir()
             result = subprocess.run(
@@ -369,7 +369,7 @@ class TmuxHostRelayTests(unittest.TestCase):
 
     def run_provider(self, provider: str) -> None:
         # A short path: tmux socket paths have a small length limit.
-        with tempfile.TemporaryDirectory(prefix="ta-", dir="/tmp") as directory:
+        with tempfile.TemporaryDirectory(prefix="ta-", dir="/tmp", ignore_cleanup_errors=True) as directory:
             root = Path(directory)
             (root / "cli").mkdir()
             (root / "tmux").mkdir(mode=0o700)
