@@ -139,9 +139,15 @@ and DeepSeek Harness through `dsh`. Set `TELEAGENT_CODEX_MODEL` in
 
 What differs from a tmux host: Codex runs without its terminal interface, so
 it has no live `/model` or `/reasoning` change and no Goal mode (use `/switch`
-for a fresh session); DeepSeek through Codex (`ds-flash`, `ds-pro`) is
-unavailable; and Claude sign-in from Telegram (`/auth claude login`) needs a
-Unix host, so sign in with the CLI instead.
+for a fresh session). On Windows, DeepSeek through Codex (`ds-flash`,
+`ds-pro`) and named bots that need a prepared Codex home are unavailable,
+because shell scripts prepare those; and Claude sign-in from Telegram
+(`/auth claude login`) needs a Unix host, so sign in with the CLI instead.
+
+DeepSeek Harness needs a current Node.js (22.20 works); on an older one the
+relay says so when you switch to it. With `TELEAGENT_DS_KEY_FILE` set it runs
+in its own isolated home with that key; without it, a host without tmux lets
+the harness use its own home and sign-in.
 
 A host with tmux uses it by default; `TELEAGENT_HOST=direct` or
 `TELEAGENT_HOST=tmux` chooses explicitly. See [architecture](docs/architecture.md).
@@ -155,7 +161,12 @@ works on a machine:
 ```bash
 python tests/live_providers.py                # every installed provider
 python tests/live_providers.py claude codex   # only these
+python tests/live_providers.py codex=sol      # a particular model
+scripts/tmux_isolated_test.sh -- python3 tests/live_providers.py --host tmux
 ```
+
+The last form checks a tmux host on its own private tmux server, including
+Codex with its terminal interface.
 
 It starts each provider through the relay's own handlers, sends one message,
 then a follow-up that only succeeds if the provider kept its conversation.

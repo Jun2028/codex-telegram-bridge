@@ -207,7 +207,7 @@ def start(
     command: list[str],
     *,
     cwd: Path,
-    env: dict[str, str],
+    env: dict[str, str | None],
     process_comm: str,
     wait_seconds: float = 15.0,
 ) -> None:
@@ -218,7 +218,11 @@ def start(
         (directory / name).unlink(missing_ok=True)
     scripts = Path(__file__).resolve().parents[1]
     pane_env = dict(os.environ)
-    pane_env.update(env)
+    for name, value in env.items():  # None removes a variable.
+        if value is None:
+            pane_env.pop(name, None)
+        else:
+            pane_env[name] = value
     pane_env["PYTHONPATH"] = str(scripts) + os.pathsep + pane_env.get("PYTHONPATH", "")
     pane_env["PYTHONUTF8"] = "1"  # Session logs and prompts are UTF-8 on every OS.
     with open(directory / "pane.out", "ab") as output:

@@ -40,7 +40,7 @@ PHRASE = "LIVE CHECK 7Q"
 
 
 def scenario(root: Path, provider: str) -> None:
-    from teleagent import host
+    from teleagent import host, processes
     relay = fixtures.Relay(root)
 
     def answer(prompt: str) -> str:
@@ -52,12 +52,15 @@ def scenario(root: Path, provider: str) -> None:
 
     with relay.patch:
         try:
-            relay.receive(LIVE[provider][0])
+            relay.receive(os.environ.get("TELEAGENT_LIVE_LAUNCH") or LIVE[provider][0])
             print("launch:", relay.sent[-1].splitlines()[0][:150], flush=True)
-            try:
-                fixtures.wait_for(relay.metadata, "session registration", 20)
-            except AssertionError:
-                pass  # The Codex TUI creates its session with the first message.
+            assert "started in" in relay.sent[-1], "the agent did not start"
+            if provider == "codex" and not host.is_direct():
+                # The Codex TUI creates its session with the first message.
+                fixtures.wait_for(lambda: processes.codex_tui_idle(relay.args.target_pane),
+                                  "the Codex composer", 120)
+            else:
+                fixtures.wait_for(relay.metadata, "the runner's session log", 120)
             first = answer(f"Reply with exactly this phrase and nothing else: {PHRASE}")
             print("reply:", first[:200], flush=True)
             assert PHRASE in first, "the provider did not return the requested phrase"
@@ -70,8 +73,23 @@ def scenario(root: Path, provider: str) -> None:
             relay.receive("/kill_agent")
             print("stop:", relay.sent[-1].splitlines()[0][:120], flush=True)
             print(f"LIVE PASS {provider}", flush=True)
+        except BaseException:
+            # What the agent's screen and supervisor showed, for diagnosis.
+            try:
+                print("--- agent screen ---\n" + processes.tmux_tail(relay.args.target_pane, 200).strip()[-1500:])
+                pane = relay.registry.tmux_pane_pid(relay.args.target_pane)
+                rows = relay.registry.ps_rows()
+                tree = set(relay.registry.descendants(pane)) if pane else set()
+                print("--- agent processes ---", [name for pid, _parent, name in rows if pid in tree])
+            except Exception as exc:  # noqa: BLE001
+                print(f"--- agent screen unavailable: {type(exc).__name__}: {exc}")
+            log = relay.runtime / "codex_agent.supervisor.log"
+            if log.is_file():
+                print("--- supervisor log ---\n" + log.read_text(errors="replace")[-800:])
+            raise
         finally:
-            host.stop(relay.args.target_pane)
+            if host.is_direct():
+                host.stop(relay.args.target_pane)
 
 
 def environment(root: Path, host_kind: str) -> dict[str, str]:
@@ -79,13 +97,15 @@ def environment(root: Path, host_kind: str) -> dict[str, str]:
     env = fixtures.relay_environment(root, None)
     env["TELEAGENT_HOST"] = host_kind
     env["TELEAGENT_TMUX_SESSION"] = "direct-test"
+    if os.environ.get("TELEAGENT_LIVE_LAUNCH"):
+        env["TELEAGENT_LIVE_LAUNCH"] = os.environ["TELEAGENT_LIVE_LAUNCH"]
     # Keep the isolated tmux server that scripts/tmux_isolated_test.sh provides.
     env.update({name: value for name, value in os.environ.items() if name.startswith("TMUX")})
     # Real sign-ins live in the real homes; only the bot's runtime is temporary.
     for name in ("TELEAGENT_CODEX_HOME", "TELEAGENT_DSH_HOME"):
         env.pop(name)
-    for name in ("TELEAGENT_DS_KEY_FILE", "TELEAGENT_DSH_HOME", "TELEAGENT_CLAUDE_BIN",
-                 "TELEAGENT_AGY_BIN", "TELEAGENT_DSH_BIN"):
+    for name in ("TELEAGENT_CODEX_HOME", "TELEAGENT_DS_KEY_FILE", "TELEAGENT_DSH_HOME",
+                 "TELEAGENT_CLAUDE_BIN", "TELEAGENT_AGY_BIN", "TELEAGENT_DSH_BIN"):
         if os.environ.get(name):
             env[name] = os.environ[name]
     return env
@@ -97,15 +117,23 @@ def main(argv: list[str]) -> int:
     if argv[:1] == ["--host"] and len(argv) >= 2:
         host_kind, argv = argv[1], argv[2:]
     print(f"host: {host_kind}")
-    chosen = argv or list(LIVE)
-    unknown = [name for name in chosen if name not in LIVE]
+    # `provider=model` checks another model, for example `codex=sol`.
+    requested = dict(item.partition("=")[::2] for item in (argv or list(LIVE)))
+    unknown = [name for name in requested if name not in LIVE]
     if unknown:
         print(f"Unknown provider: {unknown[0]}. Choose from {', '.join(LIVE)}.")
         return 2
     results: dict[str, str] = {}
-    for provider in chosen:
+    for provider, model in requested.items():
         print(f"\n=== {provider} ===", flush=True)
-        if not shutil.which(os.environ.get(f"TELEAGENT_{provider.upper()}_BIN", LIVE[provider][1])):
+        if model:
+            os.environ["TELEAGENT_LIVE_LAUNCH"] = f"/switch {provider} {model}"
+        else:
+            os.environ.pop("TELEAGENT_LIVE_LAUNCH", None)
+        # The relay installs the DeepSeek Harness itself on first use.
+        installs_itself = provider == "dsh" and os.name != "nt"
+        if not installs_itself and not shutil.which(
+                os.environ.get(f"TELEAGENT_{provider.upper()}_BIN", LIVE[provider][1])):
             results[provider] = "not installed"
             print("not installed on this machine")
             continue
@@ -118,6 +146,11 @@ def main(argv: list[str]) -> int:
             results[provider] = "FAILED (timed out)"
             continue
         finally:
+            if host_kind == host.TMUX and os.environ.get("TMUX_TMPDIR"):
+                # A tmux server keeps its first environment; end this provider's
+                # session so the next one starts a server with its own.
+                subprocess.run(["tmux", "kill-session", "-t", "direct-test"],
+                               check=False, capture_output=True)
             shutil.rmtree(root, ignore_errors=True)
         print(result.stdout.strip())
         passed = f"LIVE PASS {provider}" in result.stdout

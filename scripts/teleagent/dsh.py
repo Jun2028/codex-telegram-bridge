@@ -147,6 +147,33 @@ def ensure_binary(repo_root: Path) -> str:
     return binary
 
 
+def verify_runs(binary: str) -> None:
+    """Fail early when the harness cannot start, instead of on the first message.
+
+    On a Node.js that is too old the CLI exits silently with success, so the
+    only reliable sign is that it prints its version.
+    """
+    try:
+        completed = subprocess.run([binary, "--version"], capture_output=True, text=True,
+                                   timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise DshUnavailable(f"DeepSeek Harness could not start: {type(exc).__name__}") from exc
+    if completed.returncode == 0 and completed.stdout.strip():
+        return
+    node = shutil.which("node")
+    version = ""
+    if node:
+        try:
+            version = subprocess.run([node, "--version"], capture_output=True, text=True,
+                                     timeout=20, check=False).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    raise DshUnavailable(
+        "DeepSeek Harness did not start. It needs a current Node.js (22.20 works); "
+        f"this machine has {version or 'none on PATH'}"
+    )
+
+
 def write_model_overlay(path: Path, model: str, effort: str) -> None:
     """Write the per-agent DSH selection without storing credentials."""
     native = native_model(model)

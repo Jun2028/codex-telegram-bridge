@@ -62,8 +62,11 @@ class SessionLog:
         project_dir = home / "sessions" / harness
         sessions_dir = project_dir / "telegram"
         sessions_dir.mkdir(parents=True, exist_ok=True)
-        for legacy in project_dir.glob(f"rollout-{harness}-*.jsonl"):
-            legacy.replace(sessions_dir / legacy.name)
+        if harness == "dsh":
+            # Earlier releases wrote DeepSeek Harness logs flat, where the
+            # harness rejects them; move those out of its way.
+            for legacy in project_dir.glob("rollout-dsh-*.jsonl"):
+                legacy.replace(sessions_dir / legacy.name)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
         self.path = sessions_dir / f"rollout-{harness}-{stamp}-{uuid.uuid4()}.jsonl"
         self._handle = self.path.open("a", encoding="utf-8")

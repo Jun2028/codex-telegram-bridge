@@ -115,10 +115,11 @@ class AgentStartUnconfirmed(RuntimeError):
 
 def direct_runner_command(
     repo_root: Path, model: str, reasoning_effort: str, agent_binary: str, codex_home: Path
-) -> tuple[list[str], dict[str, str]]:
+) -> tuple[list[str], dict[str, str | None]]:
     """The runner a direct host starts, as codex_agent_supervisor.sh starts it in tmux.
 
-    Returns the command and the extra environment the runner needs.
+    Returns the command and the environment changes the runner needs; a value
+    of None removes that variable.
     """
     harness = _harnesses.without_terminal(_harnesses.for_model(model))
     agent_repo = os.environ.get("TELEAGENT_REPO") or str(repo_root)
@@ -130,28 +131,33 @@ def direct_runner_command(
     ]
     if reasoning_effort:
         command += ["--effort", reasoning_effort]
-    env = {harness.launch_binary_env: agent_binary}
+    env: dict[str, str | None] = {harness.launch_binary_env: agent_binary}
     if harness is _harnesses.CODEX_EXEC:
-        if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
-            # That Codex home is prepared by a bash script.
-            raise RuntimeError(
-                "DeepSeek through Codex needs a tmux host; without tmux, use /switch dsh"
-            )
         if os.environ.get("TELEAGENT_CODEX_ACCESS_MODE", "full-access") != "full-access":
             raise RuntimeError("Codex without tmux requires full-access mode")
         command += ["--codex-bin", agent_binary]
+        if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
+            env.update(_deepseek_key_environment())
+        else:
+            # A DeepSeek key or endpoint must never reach an OpenAI-backed Codex.
+            env.update(DEEPSEEK_API_KEY=None, OPENAI_BASE_URL=None)
     elif harness is _harnesses.DSH:
         dsh_home = _dsh.dsh_home()
-        env.update(_deepseek_key_environment(), DSH_HOME=str(dsh_home))
         command[command.index("--codex-home") + 1] = str(dsh_home)
-        command += ["--dsh-home", str(dsh_home), "--dsh-bin", agent_binary]
+        command += ["--dsh-bin", agent_binary]
+        if os.environ.get("TELEAGENT_DS_KEY_FILE"):
+            # A dedicated key file means a dedicated, isolated harness home.
+            env.update(_deepseek_key_environment(), DSH_HOME=str(dsh_home))
+            command += ["--dsh-home", str(dsh_home)]
+        # Otherwise the harness uses its own home and sign-in, as the other
+        # providers' CLIs do.
     elif harness is _harnesses.AGY:
         env["CODEX_HOME"] = str(codex_home)
         command += ["--agy-bin", _agy.agy_binary()]
     return command, env
 
 
-def _deepseek_key_environment() -> dict[str, str]:
+def _deepseek_key_environment() -> dict[str, str | None]:
     """Read the DeepSeek key file the way the bash supervisor sources it."""
     key_file = os.environ.get("TELEAGENT_DS_KEY_FILE", "")
     values: dict[str, str] = {}
@@ -160,8 +166,8 @@ def _deepseek_key_environment() -> dict[str, str]:
     key = values.get("DEEPSEEK_API_KEY") or values.get("OPENAI_API_KEY")
     if not key:
         raise RuntimeError("TELEAGENT_DS_KEY_FILE must point to a readable DeepSeek key file")
-    # The harness must use the DeepSeek key, never an ambient OpenAI one.
-    return {"DEEPSEEK_API_KEY": key, "OPENAI_API_KEY": "", "OPENAI_BASE_URL": ""}
+    # The agent must use the DeepSeek key, never an ambient OpenAI one.
+    return {"DEEPSEEK_API_KEY": key, "OPENAI_API_KEY": None, "OPENAI_BASE_URL": None}
 
 
 def _start_direct_agent(
@@ -246,25 +252,21 @@ def start_codex_agent(
                 "DeepSeek Harness requires full-access mode; this instance is chat-only"
             )
         agent_binary = _dsh.ensure_binary(repo_root)
+        _dsh.verify_runs(agent_binary)
     elif _settings.is_agy_model(model):
         # Resolve agy aliases (g-flash, argon, ...) before the pane starts so
         # an unavailable model fails with a clear message instead of a
         # restart loop, and start a fresh agy conversation (the supervisor's
         # own crash restarts keep the recorded conversation).
         model = _agy.resolve_model(model)
-        agent_binary = _processes.codex_executable()
+        # Under tmux the agy runner starts through the Codex launcher slot.
+        agent_binary = _agy.agy_binary() if _host.is_direct() else _processes.codex_executable()
         log_dir = os.environ.get("TELEAGENT_LOG_DIR")
         if log_dir:
             (Path(log_dir) / "agy_conversation.json").unlink(missing_ok=True)
     else:
         agent_binary = _processes.codex_executable()
     agent_codex_home = _processes.codex_home_for_model(model)
-    if _host.is_direct():
-        return _start_direct_agent(
-            repo_root, session, window, restart, model, reasoning_effort,
-            agent_binary, agent_codex_home,
-        )
-    shell_command = _processes.tmux_bash_shell_command()
 
     if _dsh.is_dsh_model(model) or _claude.is_claude_model(model):
         prepare_script = None
@@ -278,6 +280,10 @@ def start_codex_agent(
     else:
         prepare_script = None
     if prepare_script is not None:
+        if _portable.WINDOWS:
+            raise RuntimeError(
+                "this agent's Codex home is prepared by a shell script and needs a Unix host"
+            )
         prepare_command = [str(prepare_script)]
         if model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
             prepare_command += ["--model", model]
@@ -286,6 +292,12 @@ def start_codex_agent(
             check=True,
             timeout=30,
         )
+    if _host.is_direct():
+        return _start_direct_agent(
+            repo_root, session, window, restart, model, reasoning_effort,
+            agent_binary, agent_codex_home,
+        )
+    shell_command = _processes.tmux_bash_shell_command()
 
     if not _processes.tmux_window_exists(session, window):
         subprocess.run(

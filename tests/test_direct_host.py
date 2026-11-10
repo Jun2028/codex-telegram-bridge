@@ -56,6 +56,8 @@ elif name == "agy":
     wait(text)
     emit({"event": "result", "result": {"status": "SUCCESS", "response": "DIRECT_OK", "conversation_id": cid}})
 elif name == "dsh":
+    if args == ["--version"]:
+        print("0.0.0-fixture"); raise SystemExit(0)
     assert "--json" in args and args[-1] == "-", args
     text = sys.stdin.buffer.read().decode("utf-8")
     sid = args[args.index("--session-id") + 1] if "--session-id" in args else str(uuid.uuid4())
@@ -203,6 +205,8 @@ class Relay:
         # does. A copy, not a link: creating links needs extra rights on Windows.
         shutil.copytree(ROOT / "scripts", self.repo / "scripts",
                         ignore=shutil.ignore_patterns("__pycache__"))
+        # Model catalogues the launchers read; never the operator's own settings.
+        shutil.copytree(ROOT / "config" / "deepseek", self.repo / "config" / "deepseek")
         (self.repo / "AGENTS.md").write_text("Follow only the test request.\n", encoding="utf-8")
         state = lambda name: str(self.runtime / name)  # noqa: E731
         self.args = argparse.Namespace(
@@ -266,7 +270,7 @@ def scenario(root: Path, provider: str) -> None:
             relay.receive(launch)
             assert "started in" in relay.sent[-1], relay.sent[-1]
             wait_for(relay.metadata, "session registration")
-            assert processes.tmux_pane_command(relay.args.target_pane) == process_name
+            assert processes.tmux_pane_harness(relay.args.target_pane).process_comm == process_name
             record = relay.receive("Reply with exactly DIRECT_OK.\nSecond line stays in one message.")
             assert "submission confirmed" in record.get("relay_result", ""), record.get("relay_result")
             users = [r["payload"]["content"][0]["text"] for r in relay.records()
@@ -344,6 +348,47 @@ class DirectHostRelayTests(unittest.TestCase):
 
     def test_codex_without_its_terminal_interface(self):
         self.run_provider("codex")
+
+    def test_antigravity(self):
+        self.run_provider("agy")
+
+    def test_deepseek_harness(self):
+        self.run_provider("dsh")
+
+
+@unittest.skipIf(portable.WINDOWS or not shutil.which("tmux") or not shutil.which("bash"),
+                 "needs tmux and bash")
+class TmuxHostRelayTests(unittest.TestCase):
+    """The same scenario on a tmux host, through the bash launcher and supervisor.
+
+    Each provider gets a private tmux server: a tmux server keeps the
+    environment it was started with, and the user's own server is never touched.
+    Codex is absent because its terminal interface cannot be a stand-in;
+    `tests/live_providers.py --host tmux codex` covers it with the real CLI.
+    """
+
+    def run_provider(self, provider: str) -> None:
+        # A short path: tmux socket paths have a small length limit.
+        with tempfile.TemporaryDirectory(prefix="ta-", dir="/tmp") as directory:
+            root = Path(directory)
+            (root / "cli").mkdir()
+            (root / "tmux").mkdir(mode=0o700)
+            env = relay_environment(root, root / "cli")
+            env.update(TELEAGENT_HOST="tmux", TELEAGENT_TMUX_SESSION="direct-test",
+                       TMUX_TMPDIR=str(root / "tmux"))
+            try:
+                result = subprocess.run(
+                    [sys.executable, __file__, "--scenario", str(root), provider],
+                    env=env, text=True, capture_output=True, timeout=240)
+            finally:
+                # Only the private server under this TMUX_TMPDIR can be reached.
+                subprocess.run(["tmux", "kill-server"], env=env, check=False, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(result.stdout.count(f"PASS {provider}:"), 3,
+                             result.stdout + result.stderr)
+
+    def test_claude_code(self):
+        self.run_provider("claude")
 
     def test_antigravity(self):
         self.run_provider("agy")

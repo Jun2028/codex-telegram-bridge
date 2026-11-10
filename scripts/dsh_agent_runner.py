@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from functools import partial
 from pathlib import Path
@@ -34,7 +35,7 @@ class DshAgentRunner(_runner.AgentRunner):
         state_dir: Path,
         codex_home: Path,
         dsh_bin: str,
-        dsh_home: Path,
+        dsh_home: Path | None = None,
     ) -> None:
         self.requested_model = model
         self.model = dsh_runtime.native_model(model)
@@ -64,7 +65,8 @@ class DshAgentRunner(_runner.AgentRunner):
 
     def _environment(self) -> dict[str, str]:
         env = dict(os.environ)
-        env["DSH_HOME"] = str(self.dsh_home)
+        if self.dsh_home is not None:  # Otherwise the harness uses its own home.
+            env["DSH_HOME"] = str(self.dsh_home)
         env["DSH_PERMISSION_MODE"] = "danger-full-access"
         env["DSH_TELEMETRY_DISABLED"] = "1"
         # HPC /tmp can be mounted noexec; DSH's optional native-addon cache
@@ -78,10 +80,16 @@ class DshAgentRunner(_runner.AgentRunner):
     @staticmethod
     def _safe_error(value: str, fallback: str) -> str:
         lines = [line.strip() for line in value.splitlines() if line.strip()]
+        # A crashed Node program ends with its version, after the real error.
+        node = next((line for line in lines if re.fullmatch(r"Node\.js v[\d.]+", line)), "")
+        crash = next((line for line in reversed(lines)
+                      if re.match(r"[A-Za-z]*Error\b", line)), "")
         detail = next(
             (line for line in reversed(lines) if line.startswith("dsh:")),
-            lines[-1] if lines else fallback,
+            crash or (lines[-1] if lines else fallback),
         )
+        if node and node not in detail:
+            detail += f" ({node}; the harness may need a newer Node.js)"
         return " ".join(detail.split())[:600]
 
     def run_message(self, message: str) -> None:
@@ -135,14 +143,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--repo", type=Path, required=True)
     parser.add_argument("--state-dir", type=Path, required=True)
     parser.add_argument("--codex-home", type=Path, required=True)
-    parser.add_argument("--dsh-home", type=Path, required=True)
+    parser.add_argument("--dsh-home", type=Path,
+                        help="isolated harness home; omit to use the harness's own")
     parser.add_argument("--dsh-bin", required=True)
     args = parser.parse_args(argv)
 
     args.state_dir.mkdir(parents=True, exist_ok=True)
     args.state_dir.chmod(0o700)
-    args.dsh_home.mkdir(parents=True, exist_ok=True)
-    args.dsh_home.chmod(0o700)
+    if args.dsh_home is not None:
+        args.dsh_home.mkdir(parents=True, exist_ok=True)
+        args.dsh_home.chmod(0o700)
     try:
         agent = DshAgentRunner(
             model=args.model,
