@@ -1,4 +1,4 @@
-# The relay runs under bash on Linux. Keep Unix line endings in every checkout,
-# including Windows ones that are run through WSL.
+# The shell launchers run under bash and break on Windows line endings, so
+# every checkout keeps Unix line endings, on any operating system.
 * text=auto eol=lf
 *.png binary
