@@ -11,13 +11,39 @@ const imageTypes = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/
 const digest = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 const fail = (status, message) => Object.assign(new Error(message), { status });
 
-async function createApp({ root, key, backupDir }) {
+// Telegram signs the data it gives a Mini App with the bot's token. Checking
+// that signature proves who opened the page, which a secret address cannot.
+function telegramUser(initData, botToken, maxAgeSeconds) {
+  const fields = new URLSearchParams(typeof initData === 'string' ? initData : '');
+  const hash = fields.get('hash') || '';
+  fields.delete('hash');
+  const check = [...fields.entries()].map(([name, value]) => name + '=' + value).sort().join('\n');
+  const secret = crypto.createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const expected = crypto.createHmac('sha256', secret).update(check).digest();
+  const supplied = /^[a-f0-9]{64}$/.test(hash) ? Buffer.from(hash, 'hex') : Buffer.alloc(0);
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return null;
+  const age = Date.now() / 1000 - Number(fields.get('auth_date'));
+  if (!(age >= -300 && age <= maxAgeSeconds)) return null;
+  try { return String(JSON.parse(fields.get('user')).id); } catch { return null; }
+}
+
+async function createApp({ root, key, backupDir, readOnly = false, telegram = null }) {
   root = await fs.realpath(root);
+  const sign = text => crypto.createHmac('sha256', key).update(text).digest('hex');
+  // A download ticket lets Telegram's own downloader fetch one file for two
+  // minutes without carrying the access key or the sign-in data in its address.
+  const ticketFor = (relative, expires) => expires + '.' + sign('download\n' + relative + '\n' + expires);
+  function validTicket(relative, ticket) {
+    const [expires, mac] = String(ticket || '').split('.');
+    if (!/^\d{1,16}$/.test(expires || '') || Number(expires) < Date.now()) return false;
+    const expected = Buffer.from(ticketFor(relative, expires)), supplied = Buffer.from(expires + '.' + mac);
+    return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+  }
   let writes = Promise.resolve();
   async function resolveFile(relative = '') {
     if (typeof relative !== 'string' || relative.length > 500 || /[\\\x00-\x1f:]/.test(relative) || relative.startsWith('/')) throw fail(400, 'Invalid file path.');
     const segments = relative ? relative.split('/') : [];
-    if (segments.some(part => !part || part === '.' || part === '..' || part.startsWith('.') || /[ .]$/.test(part))) throw fail(403, 'This path is outside the demo folder.');
+    if (segments.some(part => !part || part === '.' || part === '..' || part.startsWith('.') || /[ .]$/.test(part))) throw fail(403, 'This path is outside the shared folder.');
     let target = root;
     for (const part of segments) {
       target = path.join(target, part);
@@ -25,7 +51,7 @@ async function createApp({ root, key, backupDir }) {
     }
     const real = await fs.realpath(target);
     const within = path.relative(root, real);
-    if (within === '..' || within.startsWith('..' + path.sep) || path.isAbsolute(within)) throw fail(403, 'This path is outside the demo folder.');
+    if (within === '..' || within.startsWith('..' + path.sep) || path.isAbsolute(within)) throw fail(403, 'This path is outside the shared folder.');
     return { target: real, stat: await fs.stat(real) };
   }
   function json(res, status, value) {
@@ -59,12 +85,19 @@ async function createApp({ root, key, backupDir }) {
       }
       if (url.pathname === '/favicon.ico') { res.writeHead(204); return res.end(); }
       if (!url.pathname.startsWith('/api/')) throw fail(404, 'Not found.');
-      // Telegram's native downloader cannot attach the page's Authorization header.
-      const downloadAuth = req.method === 'GET' && url.pathname === '/api/download' ? 'Bearer ' + url.searchParams.get('key') : '';
-      const supplied = Buffer.from(req.headers.authorization || downloadAuth);
-      const expected = Buffer.from('Bearer ' + key);
-      if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) throw fail(401, 'Open the private demo link to connect to this folder.');
       const relative = url.searchParams.get('path') || '';
+      // Telegram's native downloader cannot attach the page's headers, so a
+      // download may instead present a short-lived ticket for that one file.
+      const isDownload = req.method === 'GET' && url.pathname === '/api/download';
+      if (!(isDownload && validTicket(relative, url.searchParams.get('ticket')))) {
+        const downloadAuth = isDownload && !telegram ? 'Bearer ' + url.searchParams.get('key') : '';
+        const supplied = Buffer.from(req.headers.authorization || downloadAuth);
+        const expected = Buffer.from('Bearer ' + key);
+        if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) throw fail(401, 'Open the private link from the bot to connect to this folder.');
+        if (telegram && telegramUser(req.headers['x-telegram-init-data'], telegram.botToken, telegram.maxAgeSeconds) !== String(telegram.ownerId)) {
+          throw fail(401, 'Open this from the bot owner’s Telegram account. If it has been open for a long time, close and reopen it.');
+        }
+      }
       const { target, stat } = await resolveFile(relative);
       if (req.method === 'GET' && url.pathname === '/api/list') {
         if (!stat.isDirectory()) throw fail(400, 'Select a folder.');
@@ -75,7 +108,7 @@ async function createApp({ root, key, backupDir }) {
           entries.push({ name: item.name, kind: item.isDirectory() ? 'folder' : 'file', size: info.size, modified: info.mtime.toISOString() });
         }
         entries.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'folder' ? -1 : 1) || a.name.localeCompare(b.name));
-        return json(res, 200, { host: os.hostname(), root: path.basename(root), path: relative, entries });
+        return json(res, 200, { host: os.hostname(), root: path.basename(root), path: relative, entries, readOnly });
       }
       if (req.method === 'GET' && url.pathname === '/api/file') {
         if (!stat.isFile()) throw fail(400, 'Select a file.');
@@ -85,13 +118,18 @@ async function createApp({ root, key, backupDir }) {
         if (!textExtensions.has(path.extname(target).toLowerCase())) return json(res, 200, { kind: 'download', size: stat.size });
         return json(res, 200, { kind: 'text', ...(await readText(target, stat)), size: stat.size });
       }
+      if (req.method === 'GET' && url.pathname === '/api/ticket') {
+        if (!stat.isFile()) throw fail(400, 'Select a file.');
+        return json(res, 200, { ticket: ticketFor(relative, String(Date.now() + 120000)) });
+      }
       if (req.method === 'GET' && url.pathname === '/api/download') {
         if (!stat.isFile()) throw fail(400, 'Select a file.');
-        if (stat.size > MAX_FILE) throw fail(413, 'Downloads are limited to files up to 10 MB in this demo.');
+        if (stat.size > MAX_FILE) throw fail(413, 'Downloads are limited to files up to 10 MB.');
         res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Disposition': "attachment; filename*=UTF-8''" + encodeURIComponent(path.basename(target)) });
         return res.end(await fs.readFile(target));
       }
       if (req.method === 'PUT' && url.pathname === '/api/file') {
+        if (readOnly) throw fail(403, 'This folder is shared read-only.');
         if (!req.headers['content-type']?.startsWith('application/json')) throw fail(415, 'Send JSON.');
         const chunks = []; let length = 0;
         for await (const chunk of req) { length += chunk.length; if (length > MAX_TEXT * 6 + 1024) throw fail(413, 'Text is too large.'); chunks.push(chunk); }
@@ -127,6 +165,30 @@ async function createApp({ root, key, backupDir }) {
   });
 }
 
+// Which folder is shared, and how. The sample folder needs only the private
+// link. Any other folder is read-only unless TELEAGENT_FILES_WRITABLE=1, and is
+// served only to the bot owner's own Telegram account.
+async function sharedFolder() {
+  const demo = path.join(__dirname, 'demo-files');
+  const root = process.env.TELEAGENT_FILES_ROOT || demo;
+  if (path.resolve(root) === demo) return { root: demo };
+  const secrets = {};
+  let text = '';
+  try { text = await fs.readFile(process.env.TELEAGENT_SECRET_ENV || '', 'utf8'); } catch { /* reported below */ }
+  for (const line of text.split(/\r?\n/)) {
+    const match = /^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)=(.*)$/.exec(line);
+    if (match) secrets[match[1]] = match[2].trim().replace(/^(['"])(.*)\1$/, '$2');
+  }
+  const ownerId = process.env.TELEAGENT_OWNER_USER_ID || secrets.TELEAGENT_OWNER_USER_ID || secrets.TELEAGENT_CHAT_ID || '';
+  if (!secrets.TELEAGENT_BOT_TOKEN || !/^\d+$/.test(ownerId)) {
+    throw fail(500, 'Sharing a real folder needs TELEAGENT_SECRET_ENV to name this bot’s secret file, with its token and the owner’s private chat.');
+  }
+  return {
+    root, readOnly: process.env.TELEAGENT_FILES_WRITABLE !== '1',
+    telegram: { botToken: secrets.TELEAGENT_BOT_TOKEN, ownerId, maxAgeSeconds: 24 * 3600 },
+  };
+}
+
 async function main() {
   const runtime = path.join(__dirname, '.runtime');
   await fs.mkdir(runtime, { recursive: true, mode: 0o700 });
@@ -137,7 +199,7 @@ async function main() {
   catch (error) { if (error.code !== 'ENOENT') throw error; key = crypto.randomBytes(32).toString('hex'); await fs.writeFile(keyFile, key, { flag: 'wx', mode: 0o600 }); }
   await fs.chmod(keyFile, 0o600);
   if (!/^[a-f0-9]{64}$/.test(key)) throw fail(500, 'The local access-key file must contain a 32-byte hexadecimal key.');
-  const server = await createApp({ root: path.join(__dirname, 'demo-files'), key, backupDir: path.join(runtime, 'backups') });
+  const server = await createApp({ ...(await sharedFolder()), key, backupDir: path.join(runtime, 'backups') });
   const port = Number(process.env.DEMO_PORT || 8766);
   server.listen(port, '127.0.0.1', async () => {
     const url = `http://127.0.0.1:${port}/?key=${key}`;
@@ -149,4 +211,4 @@ async function main() {
   });
 }
 if (require.main === module) main().catch(error => { console.error(error.message); process.exitCode = 1; });
-module.exports = { createApp };
+module.exports = { createApp, telegramUser };

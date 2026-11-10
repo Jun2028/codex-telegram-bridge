@@ -14,19 +14,19 @@ if (tg?.initData) {
   }
   theme(); tg.onEvent('themeChanged', theme);
 }
-let directory = '', listing = [], selected = '', current = null, original = '', busy = false, requestId = 0;
+let directory = '', listing = [], selected = '', current = null, original = '', busy = false, requestId = 0, readOnly = false, rootName = 'demo-files';
 const bytes = n => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
-const dirty = () => current?.kind === 'text' && $('editor').value !== original;
+const dirty = () => !readOnly && current?.kind === 'text' && $('editor').value !== original;
 function message(text) { $('toast').textContent = text; $('toast').hidden = false; clearTimeout(message.timer); message.timer = setTimeout(() => $('toast').hidden = true, 3600); }
 async function api(route, file, options = {}) {
-  const response = await fetch('/api/' + route + '?path=' + encodeURIComponent(file), { ...options, headers: { Authorization: 'Bearer ' + key, ...options.headers } });
+  const response = await fetch('/api/' + route + '?path=' + encodeURIComponent(file), { ...options, headers: { Authorization: 'Bearer ' + key, 'X-Telegram-Init-Data': tg?.initData || '', ...options.headers } });
   if (!response.ok) { const problem = await response.json(); throw new Error(problem.error || 'Request failed.'); }
   return route === 'download' ? response.blob() : response.json();
 }
 function canLeave() { return !dirty() || confirm('Discard the unsaved changes to ' + selected.split('/').pop() + '?'); }
 function updateDirty() {
   const changed = dirty(); $('save').disabled = !changed || busy;
-  $('save-state').textContent = changed ? 'Unsaved changes' : 'Saved on this machine';
+  $('save-state').textContent = readOnly ? 'Read-only' : changed ? 'Unsaved changes' : 'Saved on this machine';
   $('save-state').classList.toggle('dirty', changed);
   if (tg?.initData) { if (changed) tg.enableClosingConfirmation(); else tg.disableClosingConfirmation(); }
   $('line-numbers').textContent = Array.from({ length: $('editor').value.split('\n').length }, (_, i) => i + 1).join('\n');
@@ -50,7 +50,7 @@ async function openDirectory(relative, check = true) {
   const id = ++requestId;
   try {
     const data = await api('list', relative); if (id !== requestId) return;
-    directory = data.path; listing = data.entries; $('filter').value = ''; selected = ''; current = null; original = '';
+    directory = data.path; listing = data.entries; readOnly = Boolean(data.readOnly); rootName = data.root; $('filter').value = ''; selected = ''; current = null; original = '';
     $('machine').textContent = data.host + ' · ' + data.root; $('connection').textContent = 'Connected'; $('connection').classList.add('connected');
     const nav = $('breadcrumbs'); nav.replaceChildren();
     const crumbs = [{ label: data.root, path: '' }]; let walk = '';
@@ -58,7 +58,7 @@ async function openDirectory(relative, check = true) {
     for (const [i, crumb] of crumbs.entries()) { if(i){const slash=document.createElement('span');slash.textContent='›';nav.append(slash);} const b=document.createElement('button');b.textContent=crumb.label;b.onclick=()=>openDirectory(crumb.path);nav.append(b); }
     $('file-view').hidden = true; $('empty').hidden = false; document.body.classList.remove('file-open'); updateDirty(); renderFiles();
   } catch(error) { $('connection').textContent = 'Disconnected'; $('connection').classList.remove('connected'); message(error.message); $('machine').textContent = error.message; }
-  finally { busy = false; $('editor').readOnly = false; updateDirty(); }
+  finally { busy = false; $('editor').readOnly = readOnly; updateDirty(); }
 }
 async function openFile(relative, check = true) {
   if (busy || (check && !canLeave())) return;
@@ -67,17 +67,17 @@ async function openFile(relative, check = true) {
   try {
     const data = await api('file', relative); if (id !== requestId) return;
     selected = relative; current = data; $('notice').hidden = true; $('empty').hidden = true; $('file-view').hidden = false;
-    $('file-name').textContent = relative.split('/').pop(); $('file-path').textContent = 'demo-files / ' + relative.split('/').join(' / ');
-    $('text-view').hidden = data.kind !== 'text'; $('image-view').hidden = data.kind !== 'image'; $('binary-view').hidden = data.kind !== 'download'; $('save').hidden = data.kind !== 'text'; $('reload').hidden = false;
+    $('file-name').textContent = relative.split('/').pop(); $('file-path').textContent = rootName + ' / ' + relative.split('/').join(' / ');
+    $('text-view').hidden = data.kind !== 'text'; $('image-view').hidden = data.kind !== 'image'; $('binary-view').hidden = data.kind !== 'download'; $('save').hidden = readOnly || data.kind !== 'text'; $('reload').hidden = false;
     original = data.content || ''; $('editor').value = original; $('editor').scrollTop = 0;
     if (data.kind === 'image') { $('preview-image').src = `data:${data.type};base64,${data.data}`; $('preview-image').alt = relative.split('/').pop(); }
     $('file-details').textContent = bytes(data.size) + (data.kind === 'text' ? ' · UTF-8' : '');
     document.body.classList.add('file-open'); updateDirty(); renderFiles();
   } catch (error) { message(error.message); }
-  finally { busy = false; $('editor').readOnly = false; updateDirty(); }
+  finally { busy = false; $('editor').readOnly = readOnly; updateDirty(); }
 }
 async function save() {
-  if (!dirty() || busy) return;
+  if (readOnly || !dirty() || busy) return;
   busy = true; $('editor').readOnly = true; $('save').textContent = 'Saving…'; updateDirty();
   const content = $('editor').value;
   try {
@@ -86,7 +86,7 @@ async function save() {
     const item = listing.find(item => [directory, item.name].filter(Boolean).join('/') === selected); if (item) item.size = new TextEncoder().encode(content).length;
     $('file-details').textContent = bytes(new TextEncoder().encode(content).length) + ' · UTF-8'; renderFiles(); message('Saved to this machine.');
   } catch(error) { $('notice').textContent = error.message; $('notice').hidden = false; }
-  finally { busy = false; $('editor').readOnly = false; $('save').textContent = 'Save changes'; updateDirty(); }
+  finally { busy = false; $('editor').readOnly = readOnly; $('save').textContent = 'Save changes'; updateDirty(); }
 }
 $('filter').oninput = renderFiles;
 $('editor').oninput = updateDirty;
@@ -99,7 +99,8 @@ $('back').onclick = () => { if(!busy && canLeave()){current=null;selected='';doc
 $('download').onclick = async () => {
   try {
     if (tg?.initData && tg.isVersionAtLeast('8.0')) {
-      tg.downloadFile({ url: location.origin + '/api/download?path=' + encodeURIComponent(selected) + '&key=' + encodeURIComponent(key), file_name: selected.split('/').pop() });
+      const { ticket } = await api('ticket', selected);
+      tg.downloadFile({ url: location.origin + '/api/download?path=' + encodeURIComponent(selected) + '&ticket=' + encodeURIComponent(ticket), file_name: selected.split('/').pop() });
       return;
     }
     const blob = await api('download', selected); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = selected.split('/').pop(); document.body.append(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),60000);

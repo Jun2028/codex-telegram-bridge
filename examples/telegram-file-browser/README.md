@@ -32,11 +32,45 @@ Rerun the connector when the HTTPS address changes. Fresh control replies read t
 
 To disable Files, set `export TELEAGENT_MINI_APP_URL_FILE=""` in this bot's ignored configuration and restart its listener; stop the file service/tunnel to invalidate access through previously issued buttons. An explicit empty setting also clears a value inherited from the current shell. Do not commit runtime files or copy them to another machine.
 
+## Share a real folder
+
+By default the service shares only the example's `demo-files/`. To browse a
+real folder on this machine, set it in this bot's ignored `config/relay.env`:
+
+```bash
+export TELEAGENT_FILES_ROOT="$HOME"
+```
+
+and start the service with the bot's environment loaded, so it can find the
+bot's secret file:
+
+```bash
+source scripts/relay_paths.sh
+node examples/telegram-file-browser/server.cjs
+```
+
+A real folder is treated differently from the sample one:
+
+- **Only the bot's owner can open it.** Telegram signs the data it hands a Mini
+  App with the bot's token. The service checks that signature on every request
+  and requires the signed-in user to be the owner of this bot's private chat
+  (or `TELEAGENT_OWNER_USER_ID`). The private link is still required, but it is
+  no longer enough: someone who obtains it cannot list or read anything. A
+  page left open for more than a day must be reopened.
+- **It is read-only** unless `TELEAGENT_FILES_WRITABLE=1` is also set.
+- **Downloads use a ticket** valid for one file for two minutes, so neither the
+  access key nor the sign-in data appears in a download address.
+- The service refuses to start if it cannot read the bot's token and owner.
+
+Files and folders whose names start with a dot, and linked folders, are never
+listed or served, so `.ssh`, `.secrets` and similar stay out of reach. Previews
+and downloads are limited to 10 MB.
+
 ## Access boundary
 
-Only `demo-files/` is exposed. Hidden files, linked folders and paths outside it are rejected. Edits keep a private backup under `.runtime/backups/` and reject stale revisions. The sample notes, CSV and plot are synthetic.
+Only the shared folder is exposed: `demo-files/` unless `TELEAGENT_FILES_ROOT` names another. Hidden files, linked folders and paths outside it are rejected. Edits, where allowed, keep a private backup under `.runtime/backups/` and reject stale revisions. The sample notes, CSV and plot are synthetic.
 
-This demonstration authenticates with a private bearer key in the launch URL, not Telegram user identity. Anyone who obtains that URL can read and edit the demo folder. Keep the launch URL and generated `Open demo.html` private; never post them in a group, log or shared artifact. The relay sends launch buttons only to its configured owner's private chat. Do not put sensitive files in this demonstration. A deployment for sensitive files needs server verification of Telegram `initData`, freshness and user/action authorization.
+The sample folder authenticates with a private bearer key in the launch URL, not Telegram user identity: anyone who obtains that URL can read and edit the sample files. A real folder additionally requires Telegram's signed proof that the bot's owner opened it, as described above. In both cases keep the launch URL and the generated `Open demo.html` private; never post them in a group, log or shared artifact. The relay sends launch buttons only to its configured owner's private chat.
 
 Run checks with `node --test examples/telegram-file-browser/test.cjs` and `python3 -m unittest discover -s tests -p test_telegram_mini_app.py`. CI runs both. The server uses Node's standard library; Telegram supplies the client-side Mini App bridge.
 
