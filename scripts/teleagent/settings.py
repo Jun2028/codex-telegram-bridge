@@ -17,7 +17,7 @@ SHELL_COMMANDS = {"bash", "sh", "zsh", "fish", "csh", "tcsh", "dash", "ksh"}
 
 # Process comm names that the relay treats as an agent runtime in a pane.
 # `codex-agy` and `codex-dsh` are native harness runners.
-CODEX_COMMANDS = {"codex", "codex-agy", "codex-dsh"}
+CODEX_COMMANDS = {"codex", "codex-agy", "codex-dsh", "codex-claude"}
 
 
 DEFAULT_SCRATCH = os.environ.get(
@@ -202,6 +202,7 @@ SUPPORTED_CODEX_AGENT_MODELS = {
     SPARK_CODEX_AGENT_MODEL,
     LUNA_CODEX_AGENT_MODEL,
     *DEEPSEEK_CODEX_AGENT_MODELS,
+    "cc-sonnet", "cc-opus", "cc-haiku",
 }
 
 

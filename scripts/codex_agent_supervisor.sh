@@ -55,6 +55,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 USE_DSH=0
+USE_CLAUDE=0
+if tele_agent_is_claude_model "$MODEL"; then
+  USE_CLAUDE=1
+fi
 if tele_agent_is_dsh_model "$MODEL"; then
   USE_DSH=1
 fi
@@ -63,7 +67,9 @@ if tele_agent_is_agy_model "$MODEL"; then
   USE_AGY=1
 fi
 AGENT_LABEL="codex"
-if [[ "$USE_DSH" -eq 1 ]]; then
+if [[ "$USE_CLAUDE" -eq 1 ]]; then
+  AGENT_LABEL="claude"
+elif [[ "$USE_DSH" -eq 1 ]]; then
   AGENT_LABEL="dsh"
 elif [[ "$USE_AGY" -eq 1 ]]; then
   AGENT_LABEL="agy"
@@ -90,7 +96,9 @@ case "$CHECK_FOR_UPDATE_ON_STARTUP" in
     ;;
 esac
 
-if [[ "$USE_DSH" -eq 1 ]]; then
+if [[ "$USE_CLAUDE" -eq 1 ]]; then
+  PYTHONPATH="$SCRIPT_DIR" python3 -m teleagent.claude || exit 2
+elif [[ "$USE_DSH" -eq 1 ]]; then
   DSH_BIN_VALUE="${TELEAGENT_DSH_BIN:-}"
   if [[ -n "$DSH_BIN_VALUE" ]]; then
     DSH_BIN_VALUE="$(command -v "$DSH_BIN_VALUE" 2>/dev/null || true)"
@@ -152,7 +160,14 @@ PY
     "$(date -Iseconds)" "$AGENT_LABEL" "$MODEL" "$REASONING_EFFORT" "$ACCESS_MODE" \
     "$restart_count" >> "$LOG_PATH"
 
-  if [[ "$USE_DSH" -eq 1 ]]; then
+  if [[ "$USE_CLAUDE" -eq 1 ]]; then
+    set +e
+    PYTHONPATH="$SCRIPT_DIR" python3 "$SCRIPT_DIR/claude_agent_runner.py" \
+      --model "$MODEL" --effort "$REASONING_EFFORT" --repo "$TELEAGENT_REPO" \
+      --state-dir "$TELEAGENT_LOG_DIR" --codex-home "$TELEAGENT_CODEX_HOME"
+    rc=$?
+    set -e
+  elif [[ "$USE_DSH" -eq 1 ]]; then
     # Native DeepSeek Harness: the pane runs the dsh runner, which executes
     # one headless DSH turn for each Telegram message.
     DS_KEY_FILE="${TELEAGENT_DS_KEY_FILE:-}"

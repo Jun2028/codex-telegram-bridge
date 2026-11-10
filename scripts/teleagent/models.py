@@ -12,6 +12,7 @@ import telegram_agent_registry as agent_registry  # noqa: E402
 
 from . import settings as _settings
 from . import processes as _processes
+from . import claude as _claude
 
 
 def parse_live_reasoning_effort(payload: str) -> str:
@@ -60,6 +61,8 @@ def normalize_codex_agent_model(value: str, *, live: bool = False) -> str:
 
 
 def validate_model_reasoning_effort(model: str, effort: str) -> None:
+    if _claude.is_claude_model(model) and effort not in _claude.EFFORTS:
+        raise ValueError("Claude Code effort must be low, medium, high, xhigh, max, or ultracode")
     if (
         model == _settings.ASTRA_CODEX_AGENT_MODEL
         and effort not in _settings.ASTRA_CODEX_REASONING_EFFORTS
@@ -258,6 +261,8 @@ def set_codex_model(
         raise RuntimeError(f"tmux target not found: {target_pane}")
     if not _processes.tmux_pane_has_codex_process(target_pane):
         raise RuntimeError(f"target {target_pane} is not running Codex")
+    if _claude.is_claude_model(selected_model) or _processes.tmux_pane_has_claude_process(target_pane):
+        raise RuntimeError("native Claude Code uses /claude or /restart_agent cc-sonnet [LEVEL] with a fresh session")
     if _processes.tmux_pane_has_dsh_process(target_pane):
         raise RuntimeError(
             "this chat runs the native DeepSeek Harness; "
@@ -328,6 +333,8 @@ def set_codex_reasoning_effort(target_pane: str, effort: str) -> str:
         raise RuntimeError(f"tmux target not found: {target_pane}")
     if not _processes.tmux_pane_has_codex_process(target_pane):
         raise RuntimeError(f"target {target_pane} is not running Codex")
+    if _processes.tmux_pane_has_claude_process(target_pane):
+        raise RuntimeError("native Claude Code uses /claude MODEL LEVEL with a fresh session")
     if _processes.tmux_pane_has_dsh_process(target_pane):
         raise RuntimeError(
             "this chat runs the native DeepSeek Harness; "

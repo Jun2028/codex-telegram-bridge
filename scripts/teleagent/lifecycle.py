@@ -18,6 +18,7 @@ from . import processes as _processes
 from . import state as _state
 from . import agy as _agy
 from . import dsh as _dsh
+from . import claude as _claude
 
 
 def agent_lifecycle_state_path(args: argparse.Namespace) -> Path | None:
@@ -97,6 +98,8 @@ def build_codex_agent_command(
     model_q = shlex.quote(model)
     reasoning_q = shlex.quote(reasoning_effort)
     binary_env = "TELEAGENT_DSH_BIN" if _dsh.is_dsh_model(model) else "TELEAGENT_CODEX_BIN"
+    if _claude.is_claude_model(model):
+        binary_env = "TELEAGENT_CLAUDE_BIN"
     command = (
         f"cd {repo_q} && export TELEAGENT_INSTANCE={instance_q} && "
         "source scripts/relay_paths.sh && "
@@ -120,7 +123,9 @@ def start_codex_agent(
 ) -> tuple[str, str, dict[str, Any] | None]:
     _processes.ensure_tmux_session(repo_root, session)
     target_pane = f"{session}:{window}.0"
-    if _dsh.is_dsh_model(model):
+    if _claude.is_claude_model(model):
+        agent_binary = _claude.ensure_available()
+    elif _dsh.is_dsh_model(model):
         if os.environ.get("TELEAGENT_CODEX_ACCESS_MODE", "full-access") == "chat-only":
             raise RuntimeError(
                 "DeepSeek Harness requires full-access mode; this instance is chat-only"
@@ -141,7 +146,7 @@ def start_codex_agent(
     agent_codex_home = _processes.codex_home_for_model(model)
     shell_command = _processes.tmux_bash_shell_command()
 
-    if _dsh.is_dsh_model(model):
+    if _dsh.is_dsh_model(model) or _claude.is_claude_model(model):
         prepare_script = None
     elif model in _settings.DEEPSEEK_CODEX_AGENT_MODELS:
         prepare_script = repo_root / "scripts" / "prepare_telegram_ds_codex_home.sh"
@@ -230,6 +235,10 @@ def start_codex_agent(
         log_dir = os.environ.get("TELEAGENT_LOG_DIR")
         if log_dir:
             (Path(log_dir) / "dsh_session.json").unlink(missing_ok=True)
+    if _claude.is_claude_model(model):
+        log_dir = os.environ.get("TELEAGENT_LOG_DIR")
+        if log_dir:
+            (Path(log_dir) / "claude_session.json").unlink(missing_ok=True)
     start_epoch = time.time()
     meta = agent_registry.create_agent(
         repo_root=repo_root,

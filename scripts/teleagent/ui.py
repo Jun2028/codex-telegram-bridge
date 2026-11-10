@@ -21,6 +21,7 @@ MENU = [
     ("codex_reset", "Check and redeem an available Codex usage reset"),
     ("interrupt", "Stop the current turn and submit a new instruction"),
     ("dsh", "Switch to the native DeepSeek Harness"),
+    ("claude", "Switch to native Claude Code"),
     ("start_agent", "Start the stopped agent"),
     ("kill_agent", "Stop the agent; keep Telegram online"),
     ("restart_agent", "Start a fresh conversation"),
@@ -75,6 +76,7 @@ def help_text() -> str:
         "/restart_agent starts a fresh conversation.\n"
         "/dsh [flash|pro] [LEVEL] switches to native DeepSeek Harness "
         "(default: Flash, max).\n"
+        "/claude [sonnet|opus|haiku] [LEVEL] starts native Claude Code.\n"
         "/recent_messages and /replay_last recover earlier requests.\n"
         "/codex_usage and /reauth manage sign-in in private.\n\n"
         "In groups: @mention this bot or reply to it. Replies stay in the "
@@ -94,6 +96,9 @@ def models_text() -> str:
         "start with /restart_agent NAME [LEVEL]\n\n"
         "/dsh [flash|pro] [off|low|high|max] switches to the native "
         "DeepSeek Harness with a fresh session; the default is Flash/max.\n\n"
+        "/claude [sonnet|opus|haiku] [LEVEL] starts native Claude Code "
+        "with a fresh session (default: Sonnet/high). "
+        "/restart_agent cc-sonnet|cc-opus|cc-haiku [LEVEL] also works.\n\n"
         "Example: /model astra xhigh\n"
         "/reasoning high changes effort in the current chat.\n"
         "Changing provider starts a fresh conversation; changes within the "

@@ -49,17 +49,17 @@ def set_process_comm(name: str = PROCESS_COMM) -> None:
 
 
 class SessionLog:
-    def __init__(self, codex_home: Path, repo: Path) -> None:
+    def __init__(self, codex_home: Path, repo: Path, *, harness: str = "dsh") -> None:
         # DSH rejects flat .jsonl files directly under a project directory.
         # Keep the relay log one level deeper so DSH can still scan its session
         # root while the listener can discover this open log via process FD.
-        project_dir = codex_home / "sessions" / "dsh"
+        project_dir = codex_home / "sessions" / harness
         sessions_dir = project_dir / "telegram"
         sessions_dir.mkdir(parents=True, exist_ok=True)
         for legacy in project_dir.glob("rollout-dsh-*.jsonl"):
             legacy.replace(sessions_dir / legacy.name)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
-        self.path = sessions_dir / f"rollout-dsh-{stamp}-{uuid.uuid4()}.jsonl"
+        self.path = sessions_dir / f"rollout-{harness}-{stamp}-{uuid.uuid4()}.jsonl"
         self._handle = self.path.open("a", encoding="utf-8")
         self.write(
             {
@@ -68,8 +68,8 @@ class SessionLog:
                 "payload": {
                     "id": str(uuid.uuid4()),
                     "cwd": str(repo),
-                    "source": "dsh-cli",
-                    "originator": "tele-agent/dsh",
+                    "source": f"{harness}-cli",
+                    "originator": f"tele-agent/{harness}",
                 },
             }
         )

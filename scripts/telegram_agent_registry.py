@@ -105,7 +105,7 @@ def read_json(path: Path) -> dict[str, Any] | None:
         return None
 
 
-CODEX_PROCESS_COMMANDS = frozenset({"codex", "codex-agy", "codex-dsh"})
+CODEX_PROCESS_COMMANDS = frozenset({"codex", "codex-agy", "codex-dsh", "codex-claude"})
 
 
 def codex_session_metadata(session_path: Path) -> dict[str, Any]:

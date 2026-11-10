@@ -46,6 +46,7 @@ new Telegram-specific command just to become a task.
 | `/models` | Lists model names and example commands. |
 | `/model astra xhigh` | Selects GPT-6 Astra and effort. Changes within a Codex home preserve the conversation. |
 | `/dsh` | Switches to native DeepSeek Harness with Flash, max reasoning, and a fresh session. |
+| `/claude [sonnet\|opus\|haiku] [LEVEL]` | Switches to native Claude Code with a fresh session (default: Sonnet/high). |
 | `/reasoning high` | Changes effort in the current conversation. |
 | `/kill_agent` | Stops the agent persistently; Telegram controls stay online. |
 | `/start_agent [MODEL] [LEVEL]` | Starts a stopped agent. |

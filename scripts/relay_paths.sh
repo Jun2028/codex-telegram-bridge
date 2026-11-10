@@ -186,6 +186,13 @@ tele_agent_is_agy_model() {
   return 1
 }
 
+tele_agent_is_claude_model() {
+  case "${1:-}" in
+    cc-sonnet|cc-opus|cc-haiku) return 0 ;;
+  esac
+  return 1
+}
+
 # A tmux server keeps the environment of the process that created it.  If a
 # cron job starts the shared server first, tmux can therefore inherit
 # SHELL=/bin/sh even though this project requires Bash.  Always give managed

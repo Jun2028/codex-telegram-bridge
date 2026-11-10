@@ -38,6 +38,7 @@ examples/telegram-file-browser/server.cjs
 examples/telegram-file-browser/test.cjs
 scripts/app_image_gen.py
 scripts/agy_agent_runner.py
+scripts/claude_agent_runner.py
 scripts/bootstrap_new_machine.sh
 scripts/check.sh
 scripts/check_deepseek_provider.py
@@ -63,6 +64,7 @@ scripts/start_telegram_inbox.sh
 scripts/start_tmux.sh
 scripts/teleagent/__init__.py
 scripts/teleagent/agy.py
+scripts/teleagent/claude.py
 scripts/teleagent/app.py
 scripts/teleagent/attachments.py
 scripts/teleagent/auth.py
@@ -97,6 +99,7 @@ scripts/telegram_inbox_watchdog.sh
 scripts/tmux_isolated_test.sh
 tests/test_agy_runner.py
 tests/test_agy_runtime.py
+tests/test_claude_harness.py
 tests/test_app_image_gen.py
 tests/test_chat_only_mode.py
 tests/test_codex_reset_api.py

@@ -18,6 +18,7 @@ from . import settings as _settings
 from . import attachments as _attachments
 from . import auth as _auth
 from . import dsh as _dsh
+from . import claude as _claude
 from . import identity as _identity
 from . import lifecycle as _lifecycle
 from . import messages as _messages
@@ -730,6 +731,8 @@ def handle_update(
                 raise RuntimeError(
                     "the agent is stopped; use /start_agent instead of /restart_agent"
                 )
+            if _claude.is_claude_model(model):
+                _claude.ensure_available()
             _lifecycle.set_agent_desired_state(
                 args,
                 _settings.AGENT_DESIRED_RUNNING,
@@ -802,13 +805,18 @@ def handle_update(
             )
             record["action"] = command.lstrip("/") + "_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
-    elif command == "/dsh":
+    elif command in {"/dsh", "/claude"}:
+        harness = _dsh if command == "/dsh" else _claude
+        label = "DeepSeek Harness" if command == "/dsh" else "Claude Code"
+        action = command.lstrip("/")
         try:
-            model, reasoning_effort = _dsh.parse_launch_payload(payload)
+            model, reasoning_effort = harness.parse_launch_payload(payload)
+            if command == "/claude":
+                _claude.ensure_available()
             _lifecycle.set_agent_desired_state(
                 args,
                 _settings.AGENT_DESIRED_RUNNING,
-                "telegram_dsh",
+                f"telegram_{action}",
             )
             target_pane, result, meta = _lifecycle.start_codex_agent(
                 repo_root=args.repo_root,
@@ -819,13 +827,13 @@ def handle_update(
                 reasoning_effort=reasoning_effort,
             )
             args.target_pane = target_pane
-            native_model = _dsh.native_model(model)
+            native_model = harness.native_model(model)
             reply = (
-                f"DeepSeek Harness started in {target_pane} with "
+                f"{label} started in {target_pane} with "
                 f"model={native_model}, reasoning={reasoning_effort}. "
                 "This switch starts a fresh session."
             )
-            record["action"] = "dsh"
+            record["action"] = action
             record["target_pane"] = target_pane
             record["agent_model"] = native_model
             record["agent_reasoning_effort"] = reasoning_effort
@@ -837,7 +845,7 @@ def handle_update(
                 agent_registry.append_agent_event(
                     meta,
                     {
-                        "event": "telegram_dsh_switched",
+                        "event": f"telegram_{action}_switched",
                         "message_id": message.get("message_id"),
                         "model": native_model,
                         "reasoning_effort": reasoning_effort,
@@ -847,10 +855,10 @@ def handle_update(
                 )
         except Exception as exc:
             reply = (
-                "Failed to switch to DeepSeek Harness: "
+                f"Failed to switch to {label}: "
                 + _transport.short_error(exc, env)
             )
-            record["action"] = "dsh_failed"
+            record["action"] = action + "_failed"
             record["error"] = _transport.short_error(exc, env, args.max_log_chars)
     elif command == "/model":
         try:

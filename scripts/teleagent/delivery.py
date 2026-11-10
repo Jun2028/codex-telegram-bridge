@@ -371,8 +371,28 @@ def drain_codex_agent_messages(
             last_message_id=last_message_id,
             delivery_state=turn.snapshot(),
         )
-        if offset == size:
-            return 0
+
+    # Some CLI versions persist goals only in SQLite, without emitting
+    # thread_goal_updated in the rollout. Without this check, automatic goal
+    # turns lose their route and same-chat steering waits forever.
+    from .status import codex_session_goal_status
+
+    goal_status = codex_session_goal_status(
+        session_path, sqlite_home=os.environ.get("CODEX_SQLITE_HOME")
+    )
+    if goal_status != "unknown":
+        turn.goal_active = goal_status == "active"
+        if goal_status in {"off", "complete"}:
+            turn.goal_destination = {}
+    if turn.goal_active and not turn.locked and not turn.conflicted:
+        # A missing historical origin must never send private context to a
+        # group. Keep known goal destinations; otherwise use the owner inbox.
+        destination = turn.goal_destination or {"chat_id": chat_id, "is_group": False}
+        turn.goal_destination = dict(destination)
+        turn.chat_id = destination["chat_id"]
+        turn.is_group = bool(destination.get("is_group"))
+        turn.topic_id = destination.get("topic_id")
+        turn.locked = True
 
     sent = 0
     with session_path.open("rb") as handle:

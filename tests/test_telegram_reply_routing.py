@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from contextlib import closing
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -185,6 +187,52 @@ class TelegramReplyRoutingTests(unittest.TestCase):
             self.assertEqual(saved["offset"], offset)
             self.assertTrue(saved["route_locked"])
             self.assertEqual(saved["active_chat_id"], "owner-private")
+
+    def test_sqlite_only_goal_restores_steering_without_replaying_output(self):
+        from argparse import Namespace
+        from teleagent import queue, submission
+
+        sessions = self.root / "sessions"
+        sessions.mkdir()
+        self.session = sessions / "rollout.jsonl"
+        self.session.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": "thread-one", "cwd": str(self.repo),
+        }}) + "\n")
+        self.meta["codex_session_path"] = str(self.session)
+        telegram_inbox.set_reply_route_chat_id(
+            self.routes, "owner-private", is_group=False, route_id="u1"
+        )
+        self.write_records(
+            self.user("[TELEGRAM USER MESSAGE message_id=1 route_id=u1 from user] task"),
+            self.assistant("final1", "final_answer", "Continuing"),
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": "two"}},
+        )
+        kwargs = dict(sessions_root=self.root, route_state_path=self.routes)
+        with mock.patch.object(_relay_transport, "send_reply") as send:
+            telegram_inbox.drain_codex_agent_messages(
+                "token", "owner-private", self.meta, self.messages, None, {}, **kwargs
+            )
+            before = json.loads(self.messages.read_text())
+            self.assertFalse(before["route_locked"])
+            with closing(sqlite3.connect(self.root / "goals_1.sqlite")) as db:
+                db.execute("CREATE TABLE thread_goals (thread_id TEXT, status TEXT)")
+                db.execute("INSERT INTO thread_goals VALUES ('thread-one', 'active')")
+                db.commit()
+            send.reset_mock()
+            with mock.patch.dict("os.environ", {"CODEX_SQLITE_HOME": str(self.root)}):
+                telegram_inbox.drain_codex_agent_messages(
+                    "token", "owner-private", self.meta, self.messages, None, {}, **kwargs
+                )
+            send.assert_not_called()
+            saved = json.loads(self.messages.read_text())
+            self.assertEqual(saved["offset"], before["offset"])
+            self.assertTrue(saved["goal_active"])
+            self.assertTrue(saved["route_locked"])
+            self.assertEqual(saved["active_chat_id"], "owner-private")
+            args = Namespace(agent_message_state_path=str(self.messages), target_pane="test")
+            with mock.patch.object(submission, "codex_session_checkpoint", return_value=(self.session, 0)):
+                self.assertTrue(queue.same_chat_can_steer(args, {"message": {"chat": {"id": "owner-private"}}}))
+                self.assertFalse(queue.same_chat_can_steer(args, {"message": {"chat": {"id": "group-chat"}}}))
 
     def test_missing_route_fails_closed_to_owner_private_chat(self) -> None:
         self.write_records(

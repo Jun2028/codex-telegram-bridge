@@ -106,7 +106,24 @@ effort before startup resolves the configured effort.
 The last actual `turn_context` is the authority for the model shown in status.
 Before the first turn, status may fall back to the configured/live selector.
 
-The Antigravity CLI (`agy`) is a third harness next to Codex and DeepSeek.
+Native Claude Code is available through `/claude [sonnet|opus|haiku] [LEVEL]`
+(default: Sonnet/high), or `/restart_agent cc-sonnet|cc-opus|cc-haiku [LEVEL]`.
+The `claude` CLI must already be installed and signed in on that machine;
+`TELEAGENT_CLAUDE_BIN` can select its executable. Availability and authentication
+are checked before replacing the current agent. Claude keeps its exact session
+ID across turns and supervisor recovery; an explicit launch starts a fresh chat.
+It uses Claude Code's local authentication and settings, tools, skills and MCP
+configuration. The bridge appends the existing repository instructions, Telegram
+skill and personality without rewriting them. Secrets remain local. This harness
+requires full-access mode; chat-only instances reject it. `/model` and `/reasoning`
+direct users to a fresh `/claude` launch instead of typing Codex commands into
+Claude. Effort levels are `low`, `medium`, `high`, `xhigh`, `max`, and `ultracode`;
+availability depends on the selected model and installed CLI version. The
+`/restart_agent` syntax accepts the shared effort names through `max`.
+Implementation follows the official [CLI reference](https://code.claude.com/docs/en/cli-reference)
+and [print-mode protocol](https://code.claude.com/docs/en/headless).
+
+The Antigravity CLI (`agy`) is another harness next to Codex, DeepSeek and Claude Code.
 Start it with `/restart_agent g-flash` (or `argon`, `sonnet`, `opus`, `oss`),
 optionally with a level from `low` to `max`.  Aliases resolve against the
 signed-in account's live `agy models` table, so `g-flash` tracks the newest

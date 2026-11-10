@@ -115,6 +115,19 @@ def tmux_pane_has_dsh_process(target_pane: str) -> bool:
     return False
 
 
+def tmux_pane_has_claude_process(target_pane: str) -> bool:
+    root_pid = agent_registry.tmux_pane_pid(target_pane)
+    if root_pid is None:
+        return False
+    for pid in agent_registry.descendants(root_pid):
+        try:
+            if Path(f"/proc/{pid}/comm").read_text().strip() == "codex-claude":
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def codex_process_identity(target_pane: str) -> str | None:
     """Return a PID-reuse-safe identity for the Codex process in a tmux pane."""
     try:

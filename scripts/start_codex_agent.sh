@@ -55,7 +55,9 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if tele_agent_is_dsh_model "$CODEX_MODEL"; then
+if tele_agent_is_claude_model "$CODEX_MODEL"; then
+  PYTHONPATH="$SCRIPT_DIR" python3 -m teleagent.claude || exit 2
+elif tele_agent_is_dsh_model "$CODEX_MODEL"; then
   if [[ "$TELEAGENT_CODEX_ACCESS_MODE" == "chat-only" ]]; then
     echo "DeepSeek Harness requires full-access mode; this instance is chat-only" >&2
     exit 2
@@ -84,7 +86,9 @@ elif ! command -v codex >/dev/null 2>&1; then
   exit 1
 fi
 
-if tele_agent_is_dsh_model "$CODEX_MODEL"; then
+if tele_agent_is_claude_model "$CODEX_MODEL"; then
+  AGENT_CODEX_HOME="$TELEAGENT_CODEX_HOME"
+elif tele_agent_is_dsh_model "$CODEX_MODEL"; then
   AGENT_CODEX_HOME="$TELEAGENT_DSH_HOME"
 elif tele_agent_is_deepseek_model "$CODEX_MODEL"; then
   AGENT_CODEX_HOME="${TELEAGENT_DS_CODEX_HOME:-$TELEAGENT_SCRATCH/tele-agent-ds-codex-home}"
@@ -153,6 +157,9 @@ printf -v supervisor_q '%q' "$SCRIPT_DIR/codex_agent_supervisor.sh"
 TARGET_PANE="$SESSION:$WINDOW.0"
 
 if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
+  if tele_agent_is_claude_model "$CODEX_MODEL"; then
+    rm -f "$TELEAGENT_LOG_DIR/claude_session.json"
+  fi
   if tele_agent_is_dsh_model "$CODEX_MODEL"; then
     rm -f "$TELEAGENT_LOG_DIR/dsh_session.json" 2>/dev/null || true
   fi
@@ -212,7 +219,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
         | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
         || true
     )"
-    if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy|codex-dsh' >/dev/null; then
+    if [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy|codex-dsh|codex-claude' >/dev/null; then
       AGENT_LAUNCH_HEALTHY=1
       break
     fi
@@ -281,9 +288,11 @@ SUPERVISOR_PID="$(
     | awk '/codex_agent_supervisor[.]sh/{print $1; exit}' \
     || true
 )"
-if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy|codex-dsh' >/dev/null; }; then
+if [[ "${AGENT_LAUNCH_HEALTHY:-0}" -eq 1 ]] || { [[ -n "$SUPERVISOR_PID" ]] && ps -o comm= --ppid "$SUPERVISOR_PID" 2>/dev/null | grep -Ex 'codex|codex-agy|codex-dsh|codex-claude' >/dev/null; }; then
   AGENT_COMMAND="codex"
-  if tele_agent_is_dsh_model "$CODEX_MODEL"; then
+  if tele_agent_is_claude_model "$CODEX_MODEL"; then
+    AGENT_COMMAND="codex-claude"
+  elif tele_agent_is_dsh_model "$CODEX_MODEL"; then
     AGENT_COMMAND="codex-dsh"
   elif tele_agent_is_agy_model "$CODEX_MODEL"; then
     AGENT_COMMAND="codex-agy"
