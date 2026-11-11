@@ -43,9 +43,8 @@ class ClaudeAgentRunner(AgentRunner):
         files.append(Path(personality) if personality else
                      next((repo / "config" / name for name in ["personality.md", "personality.default.md"]
                            if (repo / "config" / name).is_file()), repo / "config/personality.default.md"))
-        self.instructions.write_text(
-            "\n\n".join(p.read_text(encoding="utf-8") for p in files if p.is_file()),
-            encoding="utf-8", newline="")
+        with open(self.instructions, "w", encoding="utf-8", newline="") as handle:
+            handle.write("\n\n".join(p.read_text(encoding="utf-8") for p in files if p.is_file()))
         self.instructions.chmod(0o600)
         self.log.turn_context(claude.native_model(model), effort)
         self.effort_warned = False

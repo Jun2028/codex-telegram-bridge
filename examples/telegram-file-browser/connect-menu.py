@@ -1,4 +1,6 @@
 """Register this demo's current HTTPS address in the owner's bot chat."""
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json

@@ -7,6 +7,7 @@ captured; `tests/live_providers.py` runs the same flow against the real CLIs.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,16 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 from teleagent import direct_pane, host, portable
+
+@contextlib.contextmanager
+def temporary_directory(**options):
+    """A folder removed afterwards; a file a stopped process is still releasing is not an error."""
+    directory = tempfile.mkdtemp(**options)
+    try:
+        yield directory
+    finally:
+        shutil.rmtree(directory, ignore_errors=True)
+
 
 # One fixture stands in for every provider CLI; its first argument names which.
 FAKE_CLI = '''import json, sys, time, uuid
@@ -101,7 +112,7 @@ def install_fake_cli(directory: Path, name: str) -> str:
 
 class PortableTests(unittest.TestCase):
     def test_lock_excludes_a_second_holder_and_releases(self):
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+        with temporary_directory() as directory:
             path = Path(directory) / "x.lock"
             first = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
             second = os.open(path, os.O_RDWR)
@@ -131,9 +142,8 @@ class PortableTests(unittest.TestCase):
 
 class DirectPaneTests(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+        self.root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         env = mock.patch.dict(os.environ, TELEAGENT_HOST="direct", TELEAGENT_LOG_DIR=str(self.root))
         env.start()
         self.addCleanup(env.stop)
@@ -332,7 +342,7 @@ class DirectHostRelayTests(unittest.TestCase):
     """Every provider runs through the same listener, host and input protocol."""
 
     def run_provider(self, provider: str) -> None:
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+        with temporary_directory() as directory:
             root = Path(directory)
             (root / "cli").mkdir()
             result = subprocess.run(
@@ -369,7 +379,7 @@ class TmuxHostRelayTests(unittest.TestCase):
 
     def run_provider(self, provider: str) -> None:
         # A short path: tmux socket paths have a small length limit.
-        with tempfile.TemporaryDirectory(prefix="ta-", dir="/tmp", ignore_cleanup_errors=True) as directory:
+        with temporary_directory(prefix="ta-", dir="/tmp") as directory:
             root = Path(directory)
             (root / "cli").mkdir()
             (root / "tmux").mkdir(mode=0o700)
