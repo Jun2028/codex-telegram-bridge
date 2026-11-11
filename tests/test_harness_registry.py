@@ -281,7 +281,13 @@ class ProviderCommandTests(unittest.TestCase):
                             "text": "Choose a provider.", "reply_markup": {"inline_keyboard": []}}}}
         args = argparse.Namespace()
         with mock.patch.object(ui.transport, "telegram_api") as api, \
-             mock.patch.object(ui.replies, "send") as send:
+             mock.patch.object(ui.replies, "send") as send, \
+             mock.patch.object(provider_commands, "readiness", return_value=provider_commands.READY):
+            update = tap("pick:claude:signin")
+            self.assertFalse(ui.handle_quick_update(update, args, "token", "123", "123", "OurBot", {}))
+            self.assertEqual(update["message"]["text"], "/auth@OurBot claude login")
+            api.reset_mock()
+
             update = tap("pick:claude")
             self.assertTrue(ui.handle_quick_update(update, args, "token", "123", "123", "OurBot", {}))
             self.assertIn("callback_query", update)
