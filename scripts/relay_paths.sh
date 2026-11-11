@@ -93,7 +93,6 @@ fi
 export TELEAGENT_CHAT_ONLY_CODEX_HOME="${TELEAGENT_CHAT_ONLY_CODEX_HOME:-$TELEAGENT_SCRATCH/chat-only-codex-home}"
 export TELEAGENT_CHAT_ONLY_WORKDIR="${TELEAGENT_CHAT_ONLY_WORKDIR:-$TELEAGENT_SCRATCH/chat-only-workspace}"
 export TELEAGENT_DSH_HOME="${TELEAGENT_DSH_HOME:-$TELEAGENT_SCRATCH/dsh-home}"
-export TELEAGENT_DSH_VERSION="${TELEAGENT_DSH_VERSION:-0.2.0-rc.2}"
 
 # Machine context: one shared file for facts about the whole box, plus this
 # instance's own file, which wins on conflict. Both are operator-owned and
@@ -188,7 +187,7 @@ tele_agent_is_agy_model() {
 
 tele_agent_is_claude_model() {
   case "${1:-}" in
-    cc-sonnet|cc-opus|cc-haiku) return 0 ;;
+    cc-fable|cc-sonnet|cc-opus|cc-haiku) return 0 ;;
   esac
   return 1
 }

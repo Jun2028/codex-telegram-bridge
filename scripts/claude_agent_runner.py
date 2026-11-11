@@ -77,6 +77,7 @@ class ClaudeAgentRunner(AgentRunner):
                 self.save_session(event["session_id"])
                 if event.get("model"):
                     self.log.turn_context(str(event["model"]), self.effort)
+                    claude.remember_model(self.state_dir, self.model, str(event["model"]))
             elif event.get("type") == "result":
                 if event.get("session_id"):
                     self.save_session(event["session_id"])

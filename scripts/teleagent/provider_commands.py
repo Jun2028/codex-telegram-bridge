@@ -16,6 +16,7 @@ from . import dsh as _dsh
 from . import harnesses as _harnesses
 from . import messages as _messages
 from . import processes as _processes
+from . import settings as _settings
 from .harnesses import Harness
 
 PROVIDERS: dict[str, Harness] = {harness.key: harness for harness in _harnesses.PROVIDERS}
@@ -35,7 +36,7 @@ SWITCH_HELP = f"Use /switch {PROVIDER_CHOICES} [MODEL] [LEVEL]."
 CHOICES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "codex": (("sol", "astra", "luna", "spark", "gpt-5.6-sol", "ds-flash", "ds-pro"),
               ("low", "medium", "high", "xhigh", "max")),
-    "claude": (("sonnet", "opus", "haiku"), ("low", "medium", "high", "xhigh", "max")),
+    "claude": (("fable", "opus", "sonnet", "haiku"), ("low", "medium", "high", "xhigh", "max")),
     "dsh": (("flash", "pro"), ("off", "low", "high", "max")),
     "agy": (("g-flash", "argon", "sonnet", "opus", "oss"),
             ("default", "low", "medium", "high", "xhigh", "max")),
@@ -48,7 +49,7 @@ READY, SIGN_IN, MISSING = "", "sign in", "not installed"
 
 
 def readiness(key: str) -> str:
-    """Whether this machine can start the provider now: READY, SIGN_IN or MISSING."""
+    """What stops this machine from starting the provider now; READY when nothing does."""
     if key == "claude":
         try:
             executable = _claude.binary()
@@ -56,7 +57,7 @@ def readiness(key: str) -> str:
             return MISSING
         return READY if _claude.signed_in(executable) else SIGN_IN
     if key == "dsh":
-        return READY if _dsh.dsh_binary() else MISSING
+        return _dsh.blocker()
     if key == "agy":
         return READY if shutil.which(_agy.agy_binary()) else MISSING
     try:
@@ -70,7 +71,18 @@ def _rows(buttons: list[tuple[str, str]], width: int = 3) -> Buttons:
     return [buttons[index:index + width] for index in range(0, len(buttons), width)]
 
 
-def picker(parts: list[str], state=None) -> tuple[str, Buttons] | str:
+def model_label(provider: str, model: str) -> str:
+    """The provider's own name for a model the picker lists by a short word."""
+    if provider == "claude":
+        return _claude.display_name(model, _processes.agent_registry.telegram_log_dir())
+    if provider == "dsh":
+        return _dsh.native_model(_dsh.normalize_model(model))
+    if provider == "codex":
+        return _settings.CODEX_AGENT_MODEL_ALIASES.get(model, model)
+    return model
+
+
+def picker(parts: list[str], state=None, name=None) -> tuple[str, Buttons] | str:
     """One step of choosing provider, model and effort by tapping.
 
     `parts` is what has been chosen so far. Returns the next question with its
@@ -79,6 +91,7 @@ def picker(parts: list[str], state=None) -> tuple[str, Buttons] | str:
     provider that only needs signing in offers that instead of its models.
     """
     state = state or readiness
+    name = name or model_label
     provider = PROVIDERS.get(parts[0]) if parts else None
     if provider is None or provider.key not in CHOICES:
         buttons = []
@@ -92,18 +105,19 @@ def picker(parts: list[str], state=None) -> tuple[str, Buttons] | str:
         return f"/auth {provider.key} login"
     if len(parts) == 1:
         blocker = state(provider.key)
-        if blocker == MISSING:
-            return f"{provider.label} is not installed on this machine.", [[(back[0], PICK)]]
         if blocker == SIGN_IN:
             return f"{provider.label} is not signed in on this machine.", [
                 [("Sign in", f"{PICK}:{provider.key}:{SIGN_IN_STEP}")], [(back[0], PICK)]]
+        if blocker:
+            return f"{provider.label} cannot start on this machine: {blocker}.", [[(back[0], PICK)]]
     if len(parts) < 2 or parts[1] not in models:
         return f"{provider.label}: choose a model.", _rows(
-            [(model, f"{PICK}:{provider.key}:{model}") for model in models]) + [[(back[0], PICK)]]
+            [(name(provider.key, model), f"{PICK}:{provider.key}:{model}") for model in models],
+            width=2) + [[(back[0], PICK)]]
     # Offer only the levels this model accepts.
     efforts = tuple(effort for effort in efforts if _valid(provider.key, parts[1], effort))
     if len(parts) < 3 or parts[2] not in efforts:
-        return f"{provider.label} {parts[1]}: choose the effort.", _rows(
+        return f"{provider.label} {name(provider.key, parts[1])}: choose the effort.", _rows(
             [(effort, f"{PICK}:{provider.key}:{parts[1]}:{effort}") for effort in efforts]
         ) + [[back]]
     return "/switch " + _payload(provider.key, parts[1], parts[2])

@@ -202,7 +202,7 @@ SUPPORTED_CODEX_AGENT_MODELS = {
     SPARK_CODEX_AGENT_MODEL,
     LUNA_CODEX_AGENT_MODEL,
     *DEEPSEEK_CODEX_AGENT_MODELS,
-    "cc-sonnet", "cc-opus", "cc-haiku",
+    "cc-fable", "cc-sonnet", "cc-opus", "cc-haiku",
 }
 
 

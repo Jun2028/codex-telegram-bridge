@@ -121,6 +121,44 @@ def dsh_binary() -> str | None:
     return str(local) if local.is_file() and os.access(local, os.X_OK) else None
 
 
+PACKAGE = "@deepseek-ai/dsh"
+OLDEST_NODE = 22
+
+
+def npm() -> str | None:
+    """npm, also when only node itself is linked onto PATH."""
+    found = shutil.which("npm")
+    if found:
+        return found
+    node = shutil.which("node")
+    if node:
+        beside = Path(os.path.realpath(node)).with_name("npm")
+        if beside.is_file():
+            return str(beside)
+    return None
+
+
+def blocker() -> str:
+    """What stops the harness from starting here, or "" when nothing does.
+
+    Where it is not installed yet, a host that can install it on first use is
+    not blocked.
+    """
+    node = shutil.which("node")
+    if not node:
+        return "needs Node.js"
+    try:
+        version = subprocess.run([node, "--version"], capture_output=True, text=True,
+                                 timeout=20, check=False).stdout.strip()
+        if int(version.lstrip("v").split(".")[0]) < OLDEST_NODE:
+            return f"needs Node.js {OLDEST_NODE}, has {version}"
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return "needs Node.js"
+    if dsh_binary():
+        return ""
+    return "" if os.name != "nt" and npm() else "not installed"
+
+
 def ensure_binary(repo_root: Path) -> str:
     binary = dsh_binary()
     if binary:

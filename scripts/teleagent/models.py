@@ -262,7 +262,7 @@ def set_codex_model(
     if not _processes.tmux_pane_has_codex_process(target_pane):
         raise RuntimeError(f"target {target_pane} is not running Codex")
     if _claude.is_claude_model(selected_model) or _processes.tmux_pane_has_claude_process(target_pane):
-        raise RuntimeError("native Claude Code uses /claude or /restart_agent cc-sonnet [LEVEL] with a fresh session")
+        raise RuntimeError("native Claude Code uses /claude or /restart_agent cc-fable [LEVEL] with a fresh session")
     if _processes.tmux_pane_has_dsh_process(target_pane):
         raise RuntimeError(
             "this chat runs the native DeepSeek Harness; "

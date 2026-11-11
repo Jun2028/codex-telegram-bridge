@@ -5,7 +5,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/relay_paths.sh"
 
-DSH_VERSION="${TELEAGENT_DSH_VERSION:-0.2.0-rc.2}"
+# Without a pinned TELEAGENT_DSH_VERSION, an installed harness is used as it
+# is (/update moves it forward) and a first install takes the newest release.
+DSH_VERSION="${TELEAGENT_DSH_VERSION:-}"
 DSH_CLI_ROOT="$TELEAGENT_DSH_HOME/cli"
 DSH_BIN_PATH="$DSH_CLI_ROOT/node_modules/.bin/dsh"
 DSH_PACKAGE_JSON="$DSH_CLI_ROOT/node_modules/@deepseek-ai/dsh/package.json"
@@ -28,11 +30,18 @@ if [[ -f "$DSH_PACKAGE_JSON" ]] && command -v node >/dev/null 2>&1; then
       || true
   )"
 fi
-if [[ -x "$DSH_BIN_PATH" && "$installed_version" == "$DSH_VERSION" ]]; then
+if [[ -x "$DSH_BIN_PATH" && ( -z "$DSH_VERSION" || "$installed_version" == "$DSH_VERSION" ) ]]; then
   printf '%s\n' "$DSH_BIN_PATH"
   exit 0
 fi
 
+# Some hosts link only node itself onto PATH; npm sits beside the real binary.
+if ! command -v npm >/dev/null 2>&1 && command -v node >/dev/null 2>&1; then
+  node_dir="$(dirname "$(readlink -f "$(command -v node)")")"
+  if [[ -x "$node_dir/npm" ]]; then
+    PATH="$node_dir:$PATH"
+  fi
+fi
 if ! command -v npm >/dev/null 2>&1; then
   echo "npm is required to install DeepSeek Harness" >&2
   exit 1
@@ -49,7 +58,7 @@ if [[ -f "$DSH_PACKAGE_JSON" ]] && command -v node >/dev/null 2>&1; then
       || true
   )"
 fi
-if [[ -x "$DSH_BIN_PATH" && "$installed_version" == "$DSH_VERSION" ]]; then
+if [[ -x "$DSH_BIN_PATH" && ( -z "$DSH_VERSION" || "$installed_version" == "$DSH_VERSION" ) ]]; then
   printf '%s\n' "$DSH_BIN_PATH"
   exit 0
 fi
@@ -59,7 +68,7 @@ npm install \
   --no-audit \
   --no-fund \
   --omit=dev \
-  "@deepseek-ai/dsh@$DSH_VERSION" >/dev/null
+  "@deepseek-ai/dsh@${DSH_VERSION:-latest}" >/dev/null
 
 if [[ ! -x "$DSH_BIN_PATH" ]]; then
   echo "DeepSeek Harness install completed without $DSH_BIN_PATH" >&2

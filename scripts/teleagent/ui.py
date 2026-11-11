@@ -12,10 +12,11 @@ from urllib.parse import urlsplit
 from notify import redact
 
 from . import replies
-from . import messages, provider_commands, routing, state, status, transport
+from . import messages, provider_commands, routing, state, status, transport, updates
 from .settings import SGT
 
-QUICK_COMMANDS = {"/start", "/help", "/ping", "/status", "/queue", "/cancel", "/models", "/files"}
+QUICK_COMMANDS = {"/start", "/help", "/ping", "/status", "/queue", "/cancel", "/models", "/files",
+                  "/update"}
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ COMMANDS: tuple[Command, ...] = (
     Command("restart_agent", "Start a fresh conversation", "[MODEL] [LEVEL]", menu=True),
     Command("kill_agent", "Stop the agent; keep Telegram online", menu=True),
     Command("agent_status", "Agent identity, session and sign-in details in private"),
+    Command("update", "Check each provider's CLI version and update it", menu=True),
     # Accounts, in the owner's private chat. No provider means the running one.
     Command("usage", "Check live usage limits", "[codex|claude]", menu=True),
     Command("auth", "Sign-in status, sign in or sign out",
@@ -182,7 +184,7 @@ def models_text() -> str:
         "codex — sol / latest (GPT-6.1 Sol, default), astra (GPT-6 Astra), "
         "gpt-5.6-sol, luna (GPT-5.6 Luna), spark (GPT-5.3 Codex Spark), "
         "ds-flash / ds-pro (DeepSeek V4 through Codex)\n"
-        "claude — sonnet (default), opus, haiku; default level high\n"
+        "claude — fable (default), opus, sonnet, haiku; default level high\n"
         "dsh — flash (default), pro; levels off, low, high, max (default)\n"
         "agy — g-flash, argon, sonnet, opus, oss (Antigravity-hosted)\n\n"
         "Examples: /switch claude opus max, /switch codex astra xhigh, "
@@ -191,7 +193,7 @@ def models_text() -> str:
         "the model or effort and keep the conversation while it stays on the "
         "same Codex home.\n"
         "/start_agent and /restart_agent also take MODEL [LEVEL]; there "
-        "Claude models are written cc-sonnet, cc-opus, cc-haiku."
+        "Claude models are written cc-fable, cc-opus, cc-sonnet, cc-haiku."
     )
 
 
@@ -239,6 +241,39 @@ def _handle_picker(update, callback, action, args, token, owner_chat, owner_user
         # The original message can no longer be edited; ask in a new one.
         replies.send(args, token, chat_id, text, message_thread_id=message.get("message_thread_id"),
                      reply_markup=picker_keyboard(rows))
+    return True
+
+
+def _handle_update(update, callback, action, args, token, owner_chat, owner_user,
+                   bot_username, member_cache) -> bool:
+    """An Update button: run the chosen updaters in the background and report."""
+    message = dict(callback.get("message") or {})
+    message["from"] = callback.get("from") or {}
+    message.pop("entities", None)
+    mention = f"@{bot_username}" if bot_username else ""
+    probe = {"update_id": update.get("update_id"), "message": {**message, "text": "/update" + mention}}
+    chat_id, _is_group, owner = routing.resolve_source_chat(
+        probe, owner_chat, owner_user, bot_username, token, member_cache)
+    try:
+        transport.telegram_api(token, "answerCallbackQuery", {"callback_query_id": callback.get("id")})
+    except RuntimeError:
+        pass  # An expired tap acknowledgement must not discard the choice.
+    if chat_id is None or not owner:
+        return True
+    topic = message.get("message_thread_id")
+    keys = updates.keys_for(action.partition(":")[2])
+    if not keys:
+        return True
+    started = updates.run_in_background(
+        keys, Path(args.repo_root),
+        lambda text: replies.send(args, token, chat_id, text, message_thread_id=topic))
+    names = ", ".join(updates.LABELS[key] for key in keys)
+    text = f"Updating {names}. I’ll report when it finishes." if started else "An update is already running."
+    try:
+        transport.telegram_api(token, "editMessageText", {
+            "chat_id": chat_id, "message_id": message.get("message_id"), "text": text})
+    except RuntimeError:
+        replies.send(args, token, chat_id, text, message_thread_id=topic)
     return True
 
 
@@ -420,6 +455,9 @@ def handle_quick_update(
         if action.split(":")[0] == provider_commands.PICK:
             return _handle_picker(update, callback, action, args, token, owner_chat,
                                   owner_user, bot_username, member_cache)
+        if action.split(":")[0] == updates.UPDATE:
+            return _handle_update(update, callback, action, args, token, owner_chat,
+                                  owner_user, bot_username, member_cache)
         # Previously sent History buttons open the current queue.
         if action == "relay:history":
             action = "relay:queue"
@@ -485,6 +523,12 @@ def handle_quick_update(
         )
     elif command == "/models":
         reply = models_text()
+    elif command == "/update":
+        update_rows = []
+        if owner:
+            reply, update_rows = updates.report(updates.survey())
+        else:
+            reply = "Only the bot owner can update this machine's CLIs."
     elif command == "/ping":
         reply = "Online. /status shows the agent; /queue shows waiting work."
     elif command == "/files":
@@ -498,6 +542,8 @@ def handle_quick_update(
     buttons = None
     if command == "/models" and owner:
         buttons = picker_keyboard(provider_commands.picker([])[1])
+    if command == "/update" and update_rows:
+        buttons = picker_keyboard(update_rows)
     if command in {"/status", "/help", "/start", "/queue", "/files"}:
         buttons = {"inline_keyboard": [*BUTTONS["inline_keyboard"]]}
         if file_url:

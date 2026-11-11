@@ -102,6 +102,7 @@ scripts/teleagent/status.py
 scripts/teleagent/submission.py
 scripts/teleagent/transport.py
 scripts/teleagent/ui.py
+scripts/teleagent/updates.py
 scripts/teleagent/usage.py
 scripts/telegram_agent_registry.py
 scripts/telegram_agent_reply.sh
@@ -113,6 +114,7 @@ scripts/tmux_isolated_test.sh
 tests/test_agy_runner.py
 tests/test_agy_runtime.py
 tests/test_claude_harness.py
+tests/test_cli_updates.py
 tests/test_claude_controls.py
 tests/test_claude_accounts.py
 tests/test_harness_registry.py

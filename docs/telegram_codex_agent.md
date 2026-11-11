@@ -115,8 +115,8 @@ commands below (`/claude`, `/dsh`, `/claude_usage`, `/codex_usage`,
 `/claude_auth`, `/reauth`) are other spellings of these. `/usage codex` and
 `/auth codex` also work while Claude is the running agent.
 
-Native Claude Code is available through `/claude [sonnet|opus|haiku] [LEVEL]`
-(default: Sonnet/high), or `/restart_agent cc-sonnet|cc-opus|cc-haiku [LEVEL]`.
+Native Claude Code is available through `/claude [fable|opus|sonnet|haiku] [LEVEL]`
+(default: Fable/high), or `/restart_agent cc-fable|cc-opus|cc-sonnet|cc-haiku [LEVEL]`.
 The `claude` CLI must already be installed and signed in on that machine;
 `TELEAGENT_CLAUDE_BIN` can select its executable. Availability and authentication
 are checked before replacing the current agent. Claude keeps its exact session

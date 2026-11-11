@@ -5,6 +5,7 @@ import argparse
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -20,7 +21,7 @@ from teleagent import (claude, commands, harnesses, lifecycle, processes, provid
 
 SCRIPTS = ROOT / "scripts"
 # Launch models as the listener passes them to the shell launcher.
-SAMPLE_MODELS = ["cc-sonnet", "cc-opus", "cc-haiku", "dsh-flash", "dsh-pro", "g-flash",
+SAMPLE_MODELS = ["cc-fable", "cc-sonnet", "cc-opus", "cc-haiku", "dsh-flash", "dsh-pro", "g-flash",
                  "argon", "sonnet", "opus", "oss", "gemini-3-flash", "claude-opus-4",
                  "gpt-oss-120b", "gpt-6.1-sol", "gpt-6-astra", "deepseek-flash", "deepseek-v4-pro"]
 
@@ -228,7 +229,7 @@ class ProviderCommandTests(unittest.TestCase):
         self.assertEqual([label for row in rows for label, _data in row],
                          ["Codex", "Claude Code · sign in", "DeepSeek Harness · not installed", "Antigravity"])
         text, rows = picker(["dsh"])
-        self.assertIn("not installed on this machine", text)
+        self.assertEqual(text, "DeepSeek Harness cannot start on this machine: not installed.")
         self.assertEqual(rows, [[("« Back", "pick")]])
         text, rows = picker(["claude"])
         self.assertIn("not signed in on this machine", text)
@@ -239,9 +240,31 @@ class ProviderCommandTests(unittest.TestCase):
         self.assertEqual(provider_commands.resolve_account_command(
             "/auth", "claude login", harnesses.CODEX), ("/claude_auth", "login"))
 
+    def test_picker_shows_each_model_by_the_provider_s_own_name(self):
+        label = provider_commands.model_label
+        self.assertEqual(label("codex", "sol"), "gpt-6.1-sol")
+        self.assertEqual(label("dsh", "pro"), "deepseek-v4-pro")
+        self.assertEqual(label("agy", "g-flash"), "g-flash")
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        # Until the CLI has reported what an alias is on this machine, the alias stands.
+        self.assertEqual(claude.display_name("fable", directory), "fable")
+        claude.remember_model(directory, "cc-fable", "claude-fable-5-2")
+        claude.remember_model(directory, "cc-opus", "claude-opus-5-5-20260301")
+        claude.remember_model(directory, "cc-haiku", "something-else")
+        self.assertEqual(claude.display_name("fable", directory), "Fable 5.2")
+        self.assertEqual(claude.display_name("opus", directory), "Opus 5.5")
+        self.assertEqual(claude.display_name("haiku", directory), "something-else")
+        self.assertEqual(claude.display_name("sonnet", directory), "sonnet")
+        _text, rows = provider_commands.picker(
+            ["claude"], state=lambda key: provider_commands.READY,
+            name=lambda provider, model: claude.display_name(model, directory))
+        self.assertEqual(rows[0], [("Fable 5.2", "pick:claude:fable"), ("Opus 5.5", "pick:claude:opus")])
+
     def test_picker_walks_provider_model_effort_and_ends_in_a_valid_switch(self):
         def picker(parts):
-            return provider_commands.picker(parts, state=lambda key: provider_commands.READY)
+            return provider_commands.picker(parts, state=lambda key: provider_commands.READY,
+                                           name=lambda provider, model: model)
         text, rows = picker([])
         self.assertEqual([data for row in rows for _label, data in row],
                          ["pick:codex", "pick:claude", "pick:dsh", "pick:agy"])
@@ -316,7 +339,7 @@ class ProviderCommandTests(unittest.TestCase):
         parse = provider_commands.parse_switch
         self.assertEqual(parse("/switch", "claude opus max"),
                          (harnesses.CLAUDE, "cc-opus", "max", "opus"))
-        self.assertEqual(parse("/claude", ""), (harnesses.CLAUDE, "cc-sonnet", "high", "sonnet"))
+        self.assertEqual(parse("/claude", ""), (harnesses.CLAUDE, "cc-fable", "high", "fable"))
         self.assertEqual(parse("/switch", "dsh pro")[:3], (harnesses.DSH, "dsh-pro", "max"))
         self.assertEqual(parse("/dsh", "pro"), parse("/switch", "dsh pro"))
         self.assertEqual(parse("/switch", "agy g-flash")[:2], (harnesses.AGY, "g-flash"))

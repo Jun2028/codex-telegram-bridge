@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import json
 import shlex
 import shutil
@@ -11,7 +12,8 @@ import tempfile
 import time
 from pathlib import Path
 
-MODELS = {"cc-sonnet": "sonnet", "cc-opus": "opus", "cc-haiku": "haiku"}
+# Aliases the CLI itself resolves to the newest model of each family; newest family first.
+MODELS = {"cc-fable": "fable", "cc-opus": "opus", "cc-sonnet": "sonnet", "cc-haiku": "haiku"}
 EFFORTS = {"low", "medium", "high", "xhigh", "max", "ultracode"}
 
 
@@ -23,15 +25,48 @@ def native_model(model: str) -> str:
     return MODELS[model]
 
 
+SEEN_MODELS = "claude_models.json"
+_MODEL_ID = re.compile(r"claude-([a-z]+)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?(?:\[[^\]]*\])?$")
+
+
+def remember_model(state_dir: Path, model: str, resolved: str) -> None:
+    """Record the model the CLI actually ran for an alias such as `fable`."""
+    path = state_dir / SEEN_MODELS
+    try:
+        seen = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        seen = {}
+    if isinstance(seen, dict) and seen.get(MODELS[model]) == resolved:
+        return
+    seen = {**(seen if isinstance(seen, dict) else {}), MODELS[model]: resolved}
+    temporary = path.with_name(path.name + ".tmp")
+    with open(temporary, "w", encoding="utf-8") as handle:
+        json.dump(seen, handle)
+    os.replace(temporary, path)
+
+
+def display_name(alias: str, state_dir: Path) -> str:
+    """`Fable 5.2` once the CLI has reported what `fable` is here; the alias until then."""
+    try:
+        resolved = str(json.loads((state_dir / SEEN_MODELS).read_text(encoding="utf-8")).get(alias) or "")
+    except (OSError, ValueError, AttributeError):
+        resolved = ""
+    found = _MODEL_ID.match(resolved)
+    if not found:
+        return resolved or alias
+    family, major, minor = found.groups()
+    return f"{family.capitalize()} {major}" + (f".{minor}" if minor else "")
+
+
 def parse_launch_payload(payload: str) -> tuple[str, str]:
     tokens = shlex.split(payload)
     if len(tokens) > 2:
         raise ValueError("/claude accepts at most a model and effort, never a prompt")
-    model = tokens[0].lower() if tokens else "sonnet"
+    model = tokens[0].lower() if tokens else "fable"
     model = model if model.startswith("cc-") else "cc-" + model
     effort = tokens[1].lower() if len(tokens) == 2 else "high"
     if model not in MODELS:
-        raise ValueError("Claude Code model must be sonnet, opus, or haiku")
+        raise ValueError("Claude Code model must be fable, opus, sonnet, or haiku")
     if effort not in EFFORTS:
         raise ValueError("Claude Code effort must be low, medium, high, xhigh, max, or ultracode")
     return model, effort

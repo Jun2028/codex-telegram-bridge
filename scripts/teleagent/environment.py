@@ -133,7 +133,6 @@ def build(repo: Path, base: dict[str, str] | None = None) -> dict[str, str]:
     _default(env, "TELEAGENT_CHAT_ONLY_CODEX_HOME", scratch + "/chat-only-codex-home")
     _default(env, "TELEAGENT_CHAT_ONLY_WORKDIR", scratch + "/chat-only-workspace")
     _default(env, "TELEAGENT_DSH_HOME", scratch + "/dsh-home")
-    _default(env, "TELEAGENT_DSH_VERSION", "0.2.0-rc.2")
     _default(env, "TELEAGENT_MACHINE_CONTEXT", f"{home}/.config/tele-agent/machine.md")
     _default(env, "TELEAGENT_INSTANCE_CONTEXT", scratch + "/machine-context.md")
 

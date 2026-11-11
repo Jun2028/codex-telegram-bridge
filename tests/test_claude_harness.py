@@ -67,7 +67,7 @@ print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error'
         for name in claude.MODELS:
             self.assertFalse(settings.is_agy_model(name))
             self.assertEqual(messages.parse_agent_launch_payload(name)[0:2], (name, "high"))
-        self.assertEqual(claude.parse_launch_payload(""), ("cc-sonnet", "high"))
+        self.assertEqual(claude.parse_launch_payload(""), ("cc-fable", "high"))
         self.assertEqual(claude.parse_launch_payload("opus max"), ("cc-opus", "max"))
         for text in ["opus high extra", "unavailable", "sonnet none"]:
             with self.assertRaises(ValueError):
