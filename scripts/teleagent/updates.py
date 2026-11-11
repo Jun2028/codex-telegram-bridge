@@ -3,13 +3,14 @@
 Every provider is updated by its own updater (`codex update`, `claude update`,
 `agy update`); DeepSeek Harness is an npm package and is updated through npm.
 The newest published version is read from the npm registry where the provider
-publishes there. Updater output is never forwarded; the result is the version
-the CLI reports afterwards.
+publishes there. Nothing here runs unasked: versions appear in /status and
+/update, and an update starts only from its button.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -25,7 +26,6 @@ from . import dsh as _dsh
 from . import harnesses as _harnesses
 from . import portable as _portable
 from . import processes as _processes
-from . import state as _state
 
 UPDATE = "update"
 ALL = "all"
@@ -34,8 +34,8 @@ PACKAGES = {"codex": "@openai/codex", "claude": "@anthropic-ai/claude-code",
             "dsh": _dsh.PACKAGE, "agy": None}
 LABELS = {harness.key: harness.label for harness in _harnesses.PROVIDERS}
 VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?")
-CHECK_INTERVAL = 24 * 3600
 _running = threading.Lock()
+_surveyed: dict = {"at": 0.0, "found": None}
 
 
 def binary(key: str) -> str | None:
@@ -52,8 +52,9 @@ def binary(key: str) -> str | None:
 
 
 def _run(command: list[str], timeout: float) -> subprocess.CompletedProcess:
-    return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=False,
-                          stdin=subprocess.DEVNULL, **_portable.hidden_window_options())
+    return subprocess.run(command, capture_output=True, text=True, encoding="utf-8", errors="replace",
+                          timeout=timeout, check=False, stdin=subprocess.DEVNULL,
+                          **_portable.hidden_window_options())
 
 
 def installed(key: str) -> str:
@@ -94,9 +95,22 @@ def newer(candidate: str, current: str) -> bool:
     return bool(candidate and current) and order(candidate) > order(current)
 
 
-def survey() -> list[tuple[str, str, str]]:
-    """(provider key, installed version, latest version) for every provider."""
-    return [(key, installed(key), latest(key)) for key in PACKAGES]
+def survey(max_age: float = 0.0) -> list[tuple[str, str, str]]:
+    """(provider key, installed version, latest version) for every provider.
+
+    `max_age` accepts an answer that many seconds old, so /status stays quick.
+    """
+    if _surveyed["found"] is None or time.monotonic() - _surveyed["at"] >= max_age:
+        _surveyed.update(found=[(key, installed(key), latest(key)) for key in PACKAGES],
+                         at=time.monotonic())
+    return list(_surveyed["found"])
+
+
+def status_text(found: list[tuple[str, str, str]]) -> str:
+    """The installed CLIs for /status, each with a newer version when one is published."""
+    lines = [f"{LABELS[key]} {have}" + (f" ({published} available)" if newer(published, have) else "")
+             for key, have, published in found if have]
+    return "CLI versions\n" + "\n".join(lines) if lines else ""
 
 
 def report(found: list[tuple[str, str, str]]) -> tuple[str, list[list[tuple[str, str]]]]:
@@ -127,15 +141,28 @@ def _update_command(key: str, repo_root: Path) -> list[str] | None:
     executable = binary(key)
     if key == "dsh":
         npm = _dsh.npm()
-        if not npm:
-            return None
-        local = _dsh.dsh_home() / "cli"
-        if executable and local not in Path(executable).parents:
-            return [npm, "install", "-g", "--no-audit", "--no-fund", f"{_dsh.PACKAGE}@latest"]
-        local.mkdir(parents=True, exist_ok=True)
-        return [npm, "install", "--prefix", str(local), "--no-audit", "--no-fund", "--omit=dev",
-                f"{_dsh.PACKAGE}@latest"]
+        return _npm_update(npm, executable, _dsh.dsh_home() / "cli") if npm else None
     return [executable, "update"] if executable else None
+
+
+def _npm_update(npm: str, executable: str | None, fresh: Path) -> list[str]:
+    """Update the very install the command on PATH belongs to; a first install goes to `fresh`."""
+    package = f"{_dsh.PACKAGE}@latest"
+    options = ["--no-audit", "--no-fund", "--omit=dev"]
+    shim = Path(executable) if executable else fresh / "node_modules" / ".bin" / "dsh"
+    if shim.parent.name == ".bin" and shim.parent.parent.name == "node_modules":
+        project = shim.parent.parent.parent
+        project.mkdir(parents=True, exist_ok=True)
+        return [npm, "install", "--prefix", str(project), *options, package]
+    if (shim.parent / "node_modules" / _dsh.PACKAGE).is_dir():
+        prefix = shim.parent  # Windows keeps a global install beside its command.
+    else:
+        real = Path(os.path.realpath(shim))
+        modules = next((parent for parent in real.parents if parent.name == "node_modules"), None)
+        if modules is None:
+            return [npm, "install", "-g", *options, package]
+        prefix = modules.parent.parent if modules.parent.name == "lib" else modules.parent
+    return [npm, "install", "-g", "--prefix", str(prefix), *options, package]
 
 
 def update(key: str, repo_root: Path) -> str:
@@ -151,11 +178,14 @@ def update(key: str, repo_root: Path) -> str:
         return f"{label}: the updater did not finish in 15 minutes."
     except OSError as exc:
         return f"{label}: the updater could not start ({type(exc).__name__})."
+    _surveyed.update(found=None)
     after = installed(key)
     if after and after != before:
         return f"{label}: {before or 'not installed'} → {after}."
-    if completed.returncode:
-        return f"{label}: the updater failed (exit {completed.returncode}); still {before or 'not installed'}."
+    said = [line.strip() for line in (completed.stdout + "\n" + completed.stderr).splitlines() if line.strip()]
+    if completed.returncode or any(line.lower().startswith("error") for line in said[-3:]):
+        reason = f" Its last line: {said[-1][:200]}" if said else ""
+        return f"{label}: its updater failed; still {before or 'not installed'}.{reason}"
     return f"{label}: {after or 'not installed'}, already the newest its updater offers."
 
 
@@ -189,19 +219,3 @@ def keys_for(choice: str) -> list[str]:
     if choice == ALL:
         return [key for key in PACKAGES if binary(key)]
     return [choice] if choice in PACKAGES else []
-
-
-def daily_notice(path: Path, now: float | None = None) -> tuple[str, list[list[tuple[str, str]]]] | None:
-    """Once a day, the report when a newer version has appeared since the last notice."""
-    now = time.time() if now is None else now
-    data = _state.read_json_object(path)
-    if now - float(data.get("checked_ts") or 0) < CHECK_INTERVAL:
-        return None
-    found = survey()
-    available = {key: published for key, have, published in found if newer(published, have)}
-    announced = data.get("announced") if isinstance(data.get("announced"), dict) else {}
-    _state.write_json_object(path, {"checked_ts": now, "announced": available})
-    if not any(announced.get(key) != version for key, version in available.items()):
-        return None
-    text, rows = report([entry for entry in found if entry[0] in available])
-    return "Updates are available on this machine.\n\n" + text, rows

@@ -34,7 +34,6 @@ from . import state as _state
 from . import submission as _submission
 from . import transport as _transport
 from . import replies as _replies
-from . import updates as _updates
 from . import usage as _usage
 
 
@@ -391,6 +390,7 @@ def main() -> int:
     )
     codex_usage_state_path = _state.state_path(repo_root, args.codex_usage_state)
     args.codex_usage_state_path = str(codex_usage_state_path)
+    args.cli_versions = True  # /status lists each provider CLI's version.
     codex_auth_state_path = _state.state_path(repo_root, args.codex_auth_state)
     args.codex_auth_state_path = str(codex_auth_state_path)
     codex_reauth_state_path = _state.state_path(repo_root, args.codex_reauth_state)
@@ -999,13 +999,6 @@ def main() -> int:
             if notice:
                 _replies.send(args, token, chat_id, notice)
 
-    def announce_cli_updates():
-        # Once a day, tell the owner when a provider's CLI has a newer release.
-        notice = _updates.daily_notice(codex_usage_state_path.with_name("telegram_cli_updates.state.json"))
-        if notice:
-            text, rows = notice
-            _replies.send(args, token, chat_id, text, reply_markup=_ui.picker_keyboard(rows))
-
     def maintain():
         for name, interval, action in (
             ("confirmations", 2, reconcile_current_relay_confirmations),
@@ -1016,7 +1009,6 @@ def main() -> int:
             ("claude_auth", 2, lambda: _claude_auth.notify_progress(args, token, chat_id)),
             ("timers", 2, deliver_due_timed_messages),
             ("watchdog", 10, maintain_watchdog),
-            ("updates", 600, announce_cli_updates),
         ):
             if time.monotonic() < maintenance_due.get(name, 0):
                 continue

@@ -90,6 +90,7 @@ BUTTONS = {
             {"text": "Refresh", "callback_data": "relay:status"},
             {"text": "Queue", "callback_data": "relay:queue"},
             {"text": "Model", "callback_data": provider_commands.PICK},
+            {"text": "Update", "callback_data": "relay:update"},
             {"text": "Help", "callback_data": "relay:help"},
         ]
     ]
@@ -461,7 +462,7 @@ def handle_quick_update(
         # Previously sent History buttons open the current queue.
         if action == "relay:history":
             action = "relay:queue"
-        if action not in {"relay:status", "relay:queue", "relay:help"}:
+        if action not in {"relay:status", "relay:queue", "relay:help", "relay:update"}:
             return True
         message = dict(callback.get("message") or {})
         message["from"] = callback.get("from") or {}
@@ -513,6 +514,11 @@ def handle_quick_update(
             auth_failure=auth if auth.get("blocked") else None,
             audience_chat_id=chat_id if is_group else None,
         )
+        # The listener asks for versions; they are read from the CLIs, at most every ten minutes.
+        wanted = owner and not is_group and getattr(args, "cli_versions", False)
+        versions = updates.status_text(updates.survey(max_age=600)) if wanted else ""
+        if versions:
+            reply += "\n\n" + versions
     elif command == "/queue":
         reply = queue_text(args, chat_id, is_group, topic)
     elif command == "/cancel":

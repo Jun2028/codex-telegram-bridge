@@ -141,7 +141,8 @@ def main(argv: list[str]) -> int:
         try:
             result = subprocess.run(
                 [sys.executable, __file__, "--scenario", str(root), provider],
-                env=environment(root, host_kind), text=True, capture_output=True, timeout=900)
+                env=environment(root, host_kind), text=True, encoding="utf-8", errors="replace",
+                capture_output=True, timeout=900)
         except subprocess.TimeoutExpired:
             results[provider] = "FAILED (timed out)"
             continue

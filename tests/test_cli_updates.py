@@ -63,35 +63,43 @@ class ReportTests(unittest.TestCase):
         versions = iter(["0.166.0", "0.167.1"])
         with mock.patch.object(updates, "installed", side_effect=lambda key: next(versions)), \
              mock.patch.object(updates, "binary", return_value="/bin/codex"), \
-             mock.patch.object(updates, "_run", return_value=mock.Mock(returncode=0)) as run:
+             mock.patch.object(updates, "_run", return_value=mock.Mock(returncode=0, stdout="", stderr="")) as run:
             self.assertEqual(updates.update("codex", Path(".")), "Codex: 0.166.0 → 0.167.1.")
         self.assertEqual(run.call_args.args[0], ["/bin/codex", "update"])
         with mock.patch.object(updates, "installed", return_value="1.0.0"), \
              mock.patch.object(updates, "binary", return_value="/bin/agy"), \
-             mock.patch.object(updates, "_run", return_value=mock.Mock(returncode=3)):
+             mock.patch.object(updates, "_run", return_value=mock.Mock(
+                 returncode=3, stdout="working\n", stderr="Error: no network\n")):
             self.assertEqual(updates.update("agy", Path(".")),
-                             "Antigravity: the updater failed (exit 3); still 1.0.0.")
+                             "Antigravity: its updater failed; still 1.0.0. Its last line: Error: no network")
         with mock.patch.object(updates, "installed", return_value=""), \
              mock.patch.object(updates, "binary", return_value=None):
             self.assertEqual(updates.update("claude", Path(".")), "Claude Code: not installed on this machine.")
 
-    def test_daily_notice_speaks_once_per_new_version(self):
-        directory = Path(tempfile.mkdtemp())
-        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
-        path = directory / "updates.json"
-        found = [("codex", "0.166.0", "0.167.1"), ("claude", "2.1.322", "2.1.322")]
-        with mock.patch.object(updates, "survey", return_value=found) as survey:
-            text, rows = updates.daily_notice(path, now=1e9)
-            self.assertIn("Codex: 0.166.0 → 0.167.1 available", text)
-            self.assertNotIn("Claude", text)
-            self.assertEqual(rows, [[("Update Codex", "update:codex")]])
-            # Not asked again within a day, and not repeated for the same version later.
-            self.assertIsNone(updates.daily_notice(path, now=1e9 + 1000))
-            self.assertEqual(survey.call_count, 1)
-            self.assertIsNone(updates.daily_notice(path, now=1e9 + updates.CHECK_INTERVAL + 1))
-        newer = [("codex", "0.166.0", "0.168.0")]
-        with mock.patch.object(updates, "survey", return_value=newer):
-            self.assertIsNotNone(updates.daily_notice(path, now=1e9 + 3 * updates.CHECK_INTERVAL))
+    def test_status_lists_installed_clis_and_marks_a_newer_version(self):
+        found = [("codex", "0.166.0", "0.167.1"), ("claude", "2.1.322", "2.1.322"),
+                 ("dsh", "", "0.2.2-rc.1"), ("agy", "1.3.5", "")]
+        self.assertEqual(updates.status_text(found).splitlines(), [
+            "CLI versions", "Codex 0.166.0 (0.167.1 available)", "Claude Code 2.1.322", "Antigravity 1.3.5"])
+        self.assertEqual(updates.status_text([("dsh", "", "1.0.0")]), "")
+
+    def test_npm_update_goes_to_the_install_the_command_belongs_to(self):
+        root = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        fresh = root / "home" / "cli"
+        # Nothing installed: a first install under the harness's own folder.
+        self.assertEqual(updates._npm_update("npm", None, fresh)[:4], ["npm", "install", "--prefix", str(fresh)])
+        # A command beside its own node_modules: that folder is the global prefix.
+        beside = root / "bin"
+        (beside / "node_modules" / "@deepseek-ai" / "dsh").mkdir(parents=True)
+        (beside / "dsh").write_text("", encoding="utf-8")
+        self.assertEqual(updates._npm_update("npm", str(beside / "dsh"), fresh)[:5],
+                         ["npm", "install", "-g", "--prefix", str(beside)])
+        # A project install is updated in place.
+        local = root / "project" / "node_modules" / ".bin"
+        local.mkdir(parents=True)
+        self.assertEqual(updates._npm_update("npm", str(local / "dsh"), fresh)[:4],
+                         ["npm", "install", "--prefix", str(root / "project")])
 
 
 class UpdateButtonTests(unittest.TestCase):
