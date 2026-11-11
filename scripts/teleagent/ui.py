@@ -267,7 +267,9 @@ def _handle_update(update, callback, action, args, token, owner_chat, owner_user
         return True
     started = updates.run_in_background(
         keys, Path(args.repo_root),
-        lambda text: replies.send(args, token, chat_id, text, message_thread_id=topic))
+        lambda text: replies.send(args, token, chat_id, text, message_thread_id=topic),
+        marker=updates.marker_path(getattr(args, "health_state_path", "")),
+        asked={"chat_id": chat_id, "topic": topic})
     names = ", ".join(updates.LABELS[key] for key in keys)
     text = f"Updating {names}. I’ll report when it finishes." if started else "An update is already running."
     try:

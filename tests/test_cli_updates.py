@@ -122,6 +122,30 @@ class UpdateButtonTests(unittest.TestCase):
             self.assertIn("codex done\nclaude done\ndsh done\nagy done", send.call_args.args[3])
             self.assertIn("until it is restarted", send.call_args.args[3])
 
+    def test_an_update_cut_off_by_a_restart_is_still_answered(self):
+        directory = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        marker = updates.marker_path(str(directory / "telegram_inbox.health.json"))
+        release, finished = threading.Event(), threading.Event()
+        with mock.patch.object(updates, "update_many", side_effect=lambda keys, root: release.wait(10) and "done"):
+            self.assertTrue(updates.run_in_background(
+                ["codex"], Path("."), lambda text: finished.set(), marker=marker,
+                asked={"chat_id": "123", "topic": None}))
+            # While it runs, a restarted listener would find who asked.
+            self.assertTrue(marker.exists())
+            self.assertFalse(updates.run_in_background(["codex"], Path("."), lambda text: None))
+            release.set()
+            self.assertTrue(finished.wait(10))
+        for _ in range(100):
+            if not marker.exists():
+                break
+            threading.Event().wait(0.05)
+        self.assertIsNone(updates.interrupted(marker))
+        marker.write_text('{"chat_id": "123", "topic": 7}', encoding="utf-8")
+        self.assertEqual(updates.interrupted(marker), {"chat_id": "123", "topic": 7})
+        self.assertFalse(marker.exists())
+        self.assertIsNone(updates.marker_path(""))
+
     def test_someone_else_cannot_update(self):
         args = argparse.Namespace(repo_root=".")
         with mock.patch.object(ui.transport, "telegram_api"), \

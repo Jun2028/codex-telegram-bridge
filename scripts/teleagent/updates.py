@@ -194,13 +194,40 @@ def update_many(keys: list[str], repo_root: Path) -> str:
     return "\n".join(results) + "\n\nA running agent keeps its version until it is restarted."
 
 
-def run_in_background(keys: list[str], repo_root: Path, done) -> bool:
+def marker_path(health_state_path: str) -> Path | None:
+    """Where a running update is noted, beside the listener's own state."""
+    return Path(health_state_path).with_name("telegram_cli_update.pending.json") if health_state_path else None
+
+
+def interrupted(marker: Path | None) -> dict | None:
+    """Who is still owed an answer for an update that a listener restart cut off."""
+    if marker is None or not marker.exists():
+        return None
+    try:
+        asked = json.loads(marker.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        asked = None
+    try:
+        marker.unlink()
+    except OSError:
+        pass
+    return asked if isinstance(asked, dict) and asked.get("chat_id") else None
+
+
+def run_in_background(keys: list[str], repo_root: Path, done, marker: Path | None = None,
+                      asked: dict | None = None) -> bool:
     """Update without blocking the listener; `done(text)` receives the result.
 
-    Returns False when an update is already running.
+    Returns False when an update is already running. `marker` records who
+    asked, so a restart in the middle can still be answered.
     """
     if not _running.acquire(blocking=False):
         return False
+    if marker is not None:
+        try:
+            marker.write_text(json.dumps(asked or {}), encoding="utf-8")
+        except OSError:
+            marker = None
 
     def work():
         try:
@@ -210,6 +237,11 @@ def run_in_background(keys: list[str], repo_root: Path, done) -> bool:
         finally:
             _running.release()
         done(text)
+        if marker is not None:
+            try:
+                marker.unlink()
+            except OSError:
+                pass
 
     threading.Thread(target=work, name="cli-update", daemon=True).start()
     return True

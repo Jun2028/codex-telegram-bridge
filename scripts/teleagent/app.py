@@ -34,6 +34,7 @@ from . import state as _state
 from . import submission as _submission
 from . import transport as _transport
 from . import replies as _replies
+from . import updates as _updates
 from . import usage as _usage
 
 
@@ -911,6 +912,15 @@ def main() -> int:
             token,
             chat_id,
             f"Listener recovered. {interrupted} interrupted delivery attempt(s) need review in /queue.",
+        )
+
+    cut_off = _updates.interrupted(_updates.marker_path(args.health_state_path))
+    if cut_off:
+        _replies.send(
+            args, token, cut_off["chat_id"],
+            "The CLI update was cut off when the listener restarted, so it has no result. "
+            "/update shows the versions now.",
+            message_thread_id=cut_off.get("topic"),
         )
 
     error_notices = {}
