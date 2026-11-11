@@ -43,10 +43,10 @@ new Telegram-specific command just to become a task.
 | `/queue` | Shows waiting work, pending receipts and delivery problems. |
 | `/cancel ID` | Removes a waiting message. `/cancel all` removes the queue visible here. |
 | `/interrupt NEW TASK` | Aborts the managed turn, verifies it stopped, then submits the replacement instruction. |
-| `/models` | Lists each provider's models with buttons: tap a provider, a model, then an effort level to switch without typing. The Model button under `/status` opens the same picker. |
+| `/models` | Lists each provider's models with buttons: tap a provider, a model, then an effort level to switch without typing. A provider this machine cannot start is marked on the first screen as not installed or needing sign-in; tapping one that needs sign-in offers a Sign in button. The Model button under `/status` opens the same picker. |
 | `/switch PROVIDER [MODEL] [LEVEL]` | Changes provider with a fresh session. `PROVIDER` is `codex`, `claude`, `dsh` or `agy`; for example `/switch claude opus max`. Defaults: Claude Sonnet/high, DeepSeek Harness Flash/max. |
 | `/usage [codex\|claude]` | Shows live usage limits in the owner's private chat. Without a provider it reports the running agent's. |
-| `/auth [codex\|claude] [status\|login\|logout\|cancel]` | Sign-in controls in the owner's private chat; plain `/auth` shows status. Claude login returns a browser link; send its one-time code with `/claude_code CODE`. Codex supports `status` and `login`. |
+| `/auth [codex\|claude] [status\|login\|logout\|cancel]` | Sign-in controls in the owner's private chat; plain `/auth` shows status. Claude login returns a browser link; paste the one-time code it shows into the chat. Codex supports `status` and `login`. |
 | `/model astra xhigh` | Inside a Codex chat, selects GPT-6 Astra and effort. Changes within a Codex home preserve the conversation. |
 | `/reasoning high` | Inside a Codex chat, changes effort in the current conversation. |
 | `/kill_agent` | Stops the agent persistently; Telegram controls stay online. |

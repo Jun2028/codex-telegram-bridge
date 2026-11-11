@@ -48,11 +48,18 @@ def ensure_available() -> str:
     if os.environ.get("TELEAGENT_CODEX_ACCESS_MODE", "full-access") != "full-access":
         raise RuntimeError("Claude Code requires full-access mode; this instance is chat-only")
     executable = binary()
-    # Preflight before replacing a running agent. Never forward auth output.
-    result = subprocess.run([executable, "auth", "status"], capture_output=True, timeout=20)
-    if result.returncode:
+    # Preflight before replacing a running agent.
+    if not signed_in(executable):
         raise RuntimeError("Claude Code is not signed in on this machine")
     return executable
+
+
+def signed_in(executable: str) -> bool:
+    """Ask the CLI itself. Its output is never forwarded."""
+    try:
+        return subprocess.run([executable, "auth", "status"], capture_output=True, timeout=20).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
 
 
 def logout() -> str:

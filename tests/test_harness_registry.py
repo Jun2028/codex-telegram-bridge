@@ -219,8 +219,29 @@ class ProviderCommandTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 resolve(command, payload, codex)
 
+    def test_picker_says_at_once_what_this_machine_cannot_start(self):
+        blockers = {"claude": provider_commands.SIGN_IN, "dsh": provider_commands.MISSING}
+
+        def picker(parts):
+            return provider_commands.picker(parts, state=lambda key: blockers.get(key, provider_commands.READY))
+        _text, rows = picker([])
+        self.assertEqual([label for row in rows for label, _data in row],
+                         ["Codex", "Claude Code · sign in", "DeepSeek Harness · not installed", "Antigravity"])
+        text, rows = picker(["dsh"])
+        self.assertIn("not installed on this machine", text)
+        self.assertEqual(rows, [[("« Back", "pick")]])
+        text, rows = picker(["claude"])
+        self.assertIn("not signed in on this machine", text)
+        self.assertEqual(rows, [[("Sign in", "pick:claude:signin")], [("« Back", "pick")]])
+        # Sign in is the ordinary sign-in command, and only where the relay can sign in.
+        self.assertEqual(picker(["claude", "signin"]), "/auth claude login")
+        self.assertIsInstance(picker(["agy", "signin"]), tuple)
+        self.assertEqual(provider_commands.resolve_account_command(
+            "/auth", "claude login", harnesses.CODEX), ("/claude_auth", "login"))
+
     def test_picker_walks_provider_model_effort_and_ends_in_a_valid_switch(self):
-        picker = provider_commands.picker
+        def picker(parts):
+            return provider_commands.picker(parts, state=lambda key: provider_commands.READY)
         text, rows = picker([])
         self.assertEqual([data for row in rows for _label, data in row],
                          ["pick:codex", "pick:claude", "pick:dsh", "pick:agy"])
@@ -232,8 +253,8 @@ class ProviderCommandTests(unittest.TestCase):
         text, rows = picker(["claude", "opus"])
         self.assertIn(("max", "pick:claude:opus:max"), [b for row in rows for b in row])
         self.assertEqual(rows[-1], [("« Back", "pick:claude")])
-        self.assertEqual(picker(["claude", "opus", "max"]), "claude opus max")
-        self.assertEqual(picker(["agy", "g-flash", "default"]), "agy g-flash")
+        self.assertEqual(picker(["claude", "opus", "max"]), "/switch claude opus max")
+        self.assertEqual(picker(["agy", "g-flash", "default"]), "/switch agy g-flash")
         # Unknown input falls back to the nearest valid question.
         self.assertEqual(picker(["nobody"])[0], picker([])[0])
         self.assertEqual(picker(["claude", "nothing"])[0], picker(["claude"])[0])
@@ -244,7 +265,8 @@ class ProviderCommandTests(unittest.TestCase):
                 offered = [data.split(":")[3] for row in rows[:-1] for _label, data in row]
                 self.assertTrue(offered, f"{provider} {model} offers no effort")
                 for effort in offered:
-                    payload = picker([provider, model, effort])
+                    command, _, payload = picker([provider, model, effort]).partition(" ")
+                    self.assertEqual(command, "/switch")
                     self.assertIs(provider_commands.parse_switch("/switch", payload)[0],
                                   provider_commands.PROVIDERS[provider])
                 for row in rows:

@@ -100,7 +100,7 @@ def login_status(path: Path) -> str:
     phase = data.get("phase")
     if phase == "awaiting_code" and validated_url(str(data.get("verification_url") or "")):
         return (f"[Sign in to Claude]({data['verification_url']}).\n"
-                "Send the one-time code shown afterward here as `/claude_code CODE`. "
+                "Paste the one-time code shown afterward here. "
                 "Do not send your password or an API key.")
     if phase in ACTIVE:
         return "Claude sign-in is preparing the link." if phase == "starting" else "Claude is completing sign-in."

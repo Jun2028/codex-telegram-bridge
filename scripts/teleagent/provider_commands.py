@@ -8,10 +8,14 @@ spellings of these and resolve through the same functions.
 
 from __future__ import annotations
 
+import shutil
+
+from . import agy as _agy
 from . import claude as _claude
 from . import dsh as _dsh
 from . import harnesses as _harnesses
 from . import messages as _messages
+from . import processes as _processes
 from .harnesses import Harness
 
 PROVIDERS: dict[str, Harness] = {harness.key: harness for harness in _harnesses.PROVIDERS}
@@ -37,25 +41,62 @@ CHOICES: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
             ("default", "low", "medium", "high", "xhigh", "max")),
 }
 PICK = "pick"
+SIGN_IN_STEP = "signin"
 Buttons = list[list[tuple[str, str]]]
+# What stands between this machine and starting a provider.
+READY, SIGN_IN, MISSING = "", "sign in", "not installed"
+
+
+def readiness(key: str) -> str:
+    """Whether this machine can start the provider now: READY, SIGN_IN or MISSING."""
+    if key == "claude":
+        try:
+            executable = _claude.binary()
+        except RuntimeError:
+            return MISSING
+        return READY if _claude.signed_in(executable) else SIGN_IN
+    if key == "dsh":
+        return READY if _dsh.dsh_binary() else MISSING
+    if key == "agy":
+        return READY if shutil.which(_agy.agy_binary()) else MISSING
+    try:
+        _processes.codex_executable()
+    except RuntimeError:
+        return MISSING
+    return READY
 
 
 def _rows(buttons: list[tuple[str, str]], width: int = 3) -> Buttons:
     return [buttons[index:index + width] for index in range(0, len(buttons), width)]
 
 
-def picker(parts: list[str]) -> tuple[str, Buttons] | str:
+def picker(parts: list[str], state=None) -> tuple[str, Buttons] | str:
     """One step of choosing provider, model and effort by tapping.
 
     `parts` is what has been chosen so far. Returns the next question with its
-    buttons as (label, callback data), or the finished `/switch` payload.
+    buttons as (label, callback data), or the finished command to run. The
+    first screen already says which providers this machine cannot start, and a
+    provider that only needs signing in offers that instead of its models.
     """
+    state = state or readiness
     provider = PROVIDERS.get(parts[0]) if parts else None
     if provider is None or provider.key not in CHOICES:
-        return "Choose a provider. Switching starts a fresh conversation.", _rows(
-            [(PROVIDERS[key].label, f"{PICK}:{key}") for key in CHOICES], width=2)
+        buttons = []
+        for key in CHOICES:
+            blocker = state(key)
+            buttons.append((PROVIDERS[key].label + (f" · {blocker}" if blocker else ""), f"{PICK}:{key}"))
+        return "Choose a provider. Switching starts a fresh conversation.", _rows(buttons, width=2)
     models, efforts = CHOICES[provider.key]
     back = ("« Back", ":".join([PICK, *parts[:-1]]))
+    if len(parts) == 2 and parts[1] == SIGN_IN_STEP and provider in ACCOUNT_PROVIDERS:
+        return f"/auth {provider.key} login"
+    if len(parts) == 1:
+        blocker = state(provider.key)
+        if blocker == MISSING:
+            return f"{provider.label} is not installed on this machine.", [[(back[0], PICK)]]
+        if blocker == SIGN_IN:
+            return f"{provider.label} is not signed in on this machine.", [
+                [("Sign in", f"{PICK}:{provider.key}:{SIGN_IN_STEP}")], [(back[0], PICK)]]
     if len(parts) < 2 or parts[1] not in models:
         return f"{provider.label}: choose a model.", _rows(
             [(model, f"{PICK}:{provider.key}:{model}") for model in models]) + [[(back[0], PICK)]]
@@ -65,7 +106,7 @@ def picker(parts: list[str]) -> tuple[str, Buttons] | str:
         return f"{provider.label} {parts[1]}: choose the effort.", _rows(
             [(effort, f"{PICK}:{provider.key}:{parts[1]}:{effort}") for effort in efforts]
         ) + [[back]]
-    return _payload(provider.key, parts[1], parts[2])
+    return "/switch " + _payload(provider.key, parts[1], parts[2])
 
 
 def _payload(provider: str, model: str, effort: str) -> str:

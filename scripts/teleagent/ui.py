@@ -205,8 +205,9 @@ def _handle_picker(update, callback, action, args, token, owner_chat, owner_user
     """Tap-to-select provider, model and effort.
 
     Intermediate taps redraw the same message. The last tap becomes an ordinary
-    `/switch` message, so it takes the same authorization, queueing and
-    lifecycle path as a typed command; this function then returns False.
+    command message (`/switch`, or `/auth` to sign in), so it takes the same
+    authorization, queueing and lifecycle path as a typed command; this
+    function then returns False.
     """
     message = dict(callback.get("message") or {})
     message["from"] = callback.get("from") or {}
@@ -224,7 +225,8 @@ def _handle_picker(update, callback, action, args, token, owner_chat, owner_user
     step = provider_commands.picker([part for part in action.split(":")[1:] if part])
     if isinstance(step, str):
         message.pop("reply_markup", None)
-        message.update(text=f"/switch{mention} {step}", date=int(time.time()))
+        command, _, rest = step.partition(" ")
+        message.update(text=f"{command}{mention} {rest}", date=int(time.time()))
         update.pop("callback_query", None)
         update["message"] = message
         return False
