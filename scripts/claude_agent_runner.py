@@ -89,7 +89,9 @@ class ClaudeAgentRunner(AgentRunner):
             answers.clear()
 
         def on_event(event: dict) -> None:
-            if event.get("type") != "result":
+            if event.get("type") in ("assistant", "user"):
+                # Only these continue the turn; status events such as
+                # rate_limit_event may still precede the final result.
                 flush_pending()
             if event.get("parent_tool_use_id"):
                 return  # Child-agent text must not become the root answer.

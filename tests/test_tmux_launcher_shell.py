@@ -523,6 +523,7 @@ class PythonLifecycleShellTests(unittest.TestCase):
             launch_source="telegram-restart-agent",
             start_epoch=mock.ANY,
             codex_home=private_home.resolve(),
+            harness="codex",
         )
 
 

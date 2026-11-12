@@ -69,6 +69,8 @@ while prompt is not None:
         print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'Bash','input':{}}]}}),flush=True)
         print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'t1','content':'ok'}]}}),flush=True)
         print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'answer:progress'}]}}),flush=True)
+        # The real CLI reports rate limits between the closing message and the result.
+        print(json.dumps({'type':'rate_limit_event','rate_limit_info':{'status':'allowed'}}),flush=True)
     print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error','session_id':sid,'result':answer}),flush=True)
     prompt=read()
 ''')
