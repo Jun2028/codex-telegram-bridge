@@ -154,6 +154,27 @@ else:
             with self.assertRaisesRegex(RuntimeError, "no cached"):
                 claude.usage()
 
+    def test_usage_reads_fables_window_and_falls_back_to_haiku(self):
+        windows = dict(five_hour=dict(utilization=.01, resetsAt=1900000000, status='allowed'),
+                       seven_day=dict(utilization=.47, resetsAt=1900500000, status='allowed'),
+                       seven_day_overage_included=dict(utilization=.92, resetsAt=1900500000,
+                                                       status='allowed'))
+        fable = subprocess.CompletedProcess([], 0, stdout=json.dumps(dict(
+            type='rate_limit_event', rate_limit_info=dict(unifiedWindows=windows))) + "\n", stderr="")
+        with mock.patch.object(claude.subprocess, "run", return_value=fable) as run:
+            report = claude.usage()
+        self.assertEqual(run.call_args.args[0][run.call_args.args[0].index("--model") + 1], "fable")
+        self.assertIn("Fable 7-day window: 92% used", report)
+        self.assertIn("7-day window: 47% used", report)
+        unavailable = subprocess.CompletedProcess([], 1, stdout="", stderr="no access")
+        haiku = subprocess.CompletedProcess([], 0, stdout=json.dumps(dict(
+            type='rate_limit_event', rate_limit_info=dict(unifiedWindows=dict(
+                five_hour=windows["five_hour"])))) + "\n", stderr="")
+        with mock.patch.object(claude.subprocess, "run", side_effect=[unavailable, haiku]) as run:
+            self.assertIn("5-hour window: 1% used", claude.usage())
+        self.assertEqual([c.args[0][c.args[0].index("--model") + 1] for c in run.call_args_list],
+                         ["fable", "haiku"])
+
     def test_rate_limit_report_formats_only_known_safe_fields(self):
         report = claude.format_rate_limits({"rateLimitType": "five_hour", "resetsAt": 1900000000,
             "status": "allowed_warning", "utilization": .91, "isUsingOverage": True,

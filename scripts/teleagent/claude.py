@@ -107,8 +107,12 @@ def logout() -> str:
 # Marker the CLI prints on stderr when it ignores an effort level it does not know.
 UNKNOWN_EFFORT_WARNING = "Unknown --effort value"
 
-USAGE_WINDOW_LABELS = {"five_hour": "5-hour window", "seven_day": "7-day window"}
+USAGE_WINDOW_LABELS = {"five_hour": "5-hour window", "seven_day": "7-day window",
+                       "seven_day_overage_included": "Fable 7-day window"}
 USAGE_PROBE_PROMPT = "Reply with OK."
+# The CLI reports Fable's own weekly window only on a Fable turn; that turn also
+# reports the shared windows. Haiku covers accounts without Fable.
+USAGE_PROBE_MODELS = ("fable", "haiku")
 
 
 def _format_reset(value: object) -> str:
@@ -161,21 +165,25 @@ def usage() -> str:
     or history, reads the current values.
     """
     failure = "Claude's live usage query failed; no cached value was substituted"
-    with tempfile.TemporaryDirectory(prefix="claude-usage-") as directory:
-        result = subprocess.run([binary(), "--print", "--output-format", "stream-json",
-            "--verbose", "--model", "haiku", "--effort", "low", "--tools", "",
-            "--no-session-persistence"], input=USAGE_PROBE_PROMPT, text=True,
-            capture_output=True, cwd=directory, timeout=60)
     info = None
-    for line in result.stdout.splitlines():
-        try:
-            event = json.loads(line)
-        except ValueError:
-            continue
-        if (isinstance(event, dict) and event.get("type") == "rate_limit_event"
-                and isinstance(event.get("rate_limit_info"), dict)):
-            info = event["rate_limit_info"]
-    if result.returncode or info is None:
+    for model in USAGE_PROBE_MODELS:
+        with tempfile.TemporaryDirectory(prefix="claude-usage-") as directory:
+            result = subprocess.run([binary(), "--print", "--output-format", "stream-json",
+                "--verbose", "--model", model, "--effort", "low", "--tools", "",
+                "--no-session-persistence"], input=USAGE_PROBE_PROMPT, text=True,
+                capture_output=True, cwd=directory, timeout=60)
+        for line in result.stdout.splitlines():
+            try:
+                event = json.loads(line)
+            except ValueError:
+                continue
+            if (isinstance(event, dict) and event.get("type") == "rate_limit_event"
+                    and isinstance(event.get("rate_limit_info"), dict)):
+                info = event["rate_limit_info"]
+        if not result.returncode and info is not None:
+            break
+        info = None
+    if info is None:
         # Never forward stdout or stderr: either may carry account details.
         raise RuntimeError(failure)
     try:
