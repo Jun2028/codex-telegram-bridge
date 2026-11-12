@@ -772,7 +772,8 @@ def handle_update(
                 [
                     f"agent id: {meta.get('agent_id')}",
                     f"agent jsonl: {meta.get('agent_jsonl')}",
-                    f"codex session: {meta.get('codex_session_path') or '(not detected yet)'}",
+                    f"{_harnesses.label_for_key(meta.get('harness'))} session: "
+                    f"{meta.get('codex_session_path') or '(not detected yet)'}",
                 ]
             )
             record["agent_id"] = meta.get("agent_id")
@@ -873,7 +874,8 @@ def handle_update(
                 reply += (
                     f"\nAgent id: {meta.get('agent_id')}"
                     f"\nAgent JSONL: {meta.get('agent_jsonl')}"
-                    f"\nCodex session: {meta.get('codex_session_path') or '(not detected yet)'}"
+                    f"\n{_harnesses.label_for_key(meta.get('harness'))} session: "
+                    f"{meta.get('codex_session_path') or '(not detected yet)'}"
                 )
                 record["agent_id"] = meta.get("agent_id")
                 record["agent_jsonl"] = meta.get("agent_jsonl")

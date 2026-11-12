@@ -228,6 +228,7 @@ def _start_direct_agent(
                 target_pane=target_pane,
                 launch_source="telegram-start-agent-reuse",
                 codex_home=agent_codex_home,
+                harness=harness.key,
             )
             agent_registry.append_agent_event(meta, {"event": "agent_reused_by_start_agent"})
             return (
@@ -248,6 +249,7 @@ def _start_direct_agent(
         launch_source="telegram-restart-agent" if restart else "telegram-start-agent",
         start_epoch=start_epoch,
         codex_home=agent_codex_home,
+        harness=harness.key,
     )
     env.update(agent_registry.agent_env(meta))
     _host.start(
@@ -382,6 +384,7 @@ def start_codex_agent(
                     target_pane=target_pane,
                     launch_source="telegram-start-agent-reuse",
                     codex_home=agent_codex_home,
+                    harness=_harnesses.for_model(model).key,
                 )
                 agent_registry.append_agent_event(
                     meta, {"event": "agent_reused_by_start_agent"}
@@ -413,6 +416,7 @@ def start_codex_agent(
         launch_source="telegram-restart-agent" if restart else "telegram-start-agent",
         start_epoch=start_epoch,
         codex_home=agent_codex_home,
+        harness=_harnesses.for_model(model).key,
     )
     codex_agent_env = agent_registry.shell_env_prefix(meta)
     command = build_codex_agent_command(

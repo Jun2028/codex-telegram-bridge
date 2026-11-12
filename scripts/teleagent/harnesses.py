@@ -127,6 +127,14 @@ def without_terminal(harness: Harness) -> Harness:
     return CODEX_EXEC if harness is CODEX else harness
 
 
+def label_for_key(key: object) -> str:
+    """Operator label for a recorded harness key; Codex for older records."""
+    for harness in ALL:
+        if harness.key == key:
+            return harness.label
+    return CODEX.label
+
+
 def for_process_comm(command_name: str) -> Harness | None:
     for harness in ALL:
         if harness.process_comm == command_name:

@@ -86,6 +86,15 @@ elif ! command -v codex >/dev/null 2>&1; then
   exit 1
 fi
 
+AGENT_HARNESS="codex"
+if tele_agent_is_claude_model "$CODEX_MODEL"; then
+  AGENT_HARNESS="claude"
+elif tele_agent_is_dsh_model "$CODEX_MODEL"; then
+  AGENT_HARNESS="dsh"
+elif tele_agent_is_agy_model "$CODEX_MODEL"; then
+  AGENT_HARNESS="agy"
+fi
+
 if tele_agent_is_claude_model "$CODEX_MODEL"; then
   AGENT_CODEX_HOME="$TELEAGENT_CODEX_HOME"
 elif tele_agent_is_dsh_model "$CODEX_MODEL"; then
@@ -196,6 +205,7 @@ if [[ "${CODEX_ALREADY_RUNNING:-0}" -ne 1 ]]; then
       --launch-source "start_codex_agent.sh" \
       --start-epoch "$START_EPOCH" \
       --codex-home "$AGENT_CODEX_HOME" \
+      --harness "$AGENT_HARNESS" \
       --shell-exports
   )"
   printf -v agent_id_q '%q' "$TELEAGENT_AGENT_ID"
@@ -238,6 +248,7 @@ else
       --target-pane "$TARGET_PANE" \
       --launch-source "start_codex_agent.sh-reuse" \
       --codex-home "$AGENT_CODEX_HOME" \
+      --harness "$AGENT_HARNESS" \
       --shell-exports
   )"
 fi

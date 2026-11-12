@@ -308,10 +308,10 @@ def append_agent_event(meta_or_path: dict[str, Any] | str | Path | None, record:
     append_jsonl(Path(path_text), event)
 
 
-def new_agent_id() -> str:
+def new_agent_id(harness: str = "codex") -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     host = re.sub(r"[^A-Za-z0-9_.-]+", "-", socket.gethostname()).strip("-") or "host"
-    return f"codex-{stamp}-{host}-{uuid.uuid4().hex[:8]}"
+    return f"{harness}-{stamp}-{host}-{uuid.uuid4().hex[:8]}"
 
 
 def create_agent(
@@ -322,10 +322,11 @@ def create_agent(
     launch_source: str,
     start_epoch: float | None = None,
     codex_home: str | Path | None = None,
+    harness: str = "codex",
 ) -> dict[str, Any]:
     if start_epoch is None:
         start_epoch = time.time()
-    agent_id = new_agent_id()
+    agent_id = new_agent_id(harness)
     root, meta_path, events_path = agent_paths(agent_id)
     root.mkdir(parents=True, exist_ok=True)
     meta = {
@@ -334,6 +335,7 @@ def create_agent(
         "codex_session_path": None,
         "created_iso": utc_iso(start_epoch),
         "created_ts": int(start_epoch),
+        "harness": harness,
         "host": socket.gethostname(),
         "launch_source": launch_source,
         "meta_json": str(meta_path),
@@ -832,6 +834,7 @@ def adopt_existing_agent(
     target_pane: str,
     launch_source: str,
     codex_home: str | Path | None = None,
+    harness: str = "codex",
 ) -> dict[str, Any]:
     meta = active_agent_for_pane(target_pane)
     if meta and meta.get("agent_id"):
@@ -866,6 +869,7 @@ def adopt_existing_agent(
         target_pane=target_pane,
         launch_source=launch_source,
         codex_home=codex_home,
+        harness=harness,
     )
     append_agent_event(meta, {"event": "agent_adopted_existing_pane"})
     return refresh_codex_session_link(meta, target_pane=target_pane)
@@ -913,6 +917,7 @@ def main() -> int:
     create_parser.add_argument("--launch-source", default="manual")
     create_parser.add_argument("--start-epoch", type=float, default=None)
     create_parser.add_argument("--codex-home", type=Path, default=None)
+    create_parser.add_argument("--harness", default="codex")
     create_parser.add_argument("--shell-exports", action="store_true")
 
     adopt_parser = subparsers.add_parser("adopt")
@@ -922,6 +927,7 @@ def main() -> int:
     adopt_parser.add_argument("--target-pane", required=True)
     adopt_parser.add_argument("--launch-source", default="adopted-existing")
     adopt_parser.add_argument("--codex-home", type=Path, default=None)
+    adopt_parser.add_argument("--harness", default="codex")
     adopt_parser.add_argument("--shell-exports", action="store_true")
 
     link_parser = subparsers.add_parser("link")
@@ -957,6 +963,7 @@ def main() -> int:
             launch_source=args.launch_source,
             start_epoch=args.start_epoch,
             codex_home=args.codex_home,
+            harness=args.harness,
         )
         if args.shell_exports:
             print_shell_exports(meta)
@@ -971,6 +978,7 @@ def main() -> int:
             target_pane=args.target_pane,
             launch_source=args.launch_source,
             codex_home=args.codex_home,
+            harness=args.harness,
         )
         if args.shell_exports:
             print_shell_exports(meta)
