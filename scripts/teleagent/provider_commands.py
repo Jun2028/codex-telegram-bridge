@@ -182,6 +182,10 @@ def parse_switch(command: str, payload: str) -> tuple[Harness, str, str, str]:
             "Name an Antigravity model: /switch agy g-flash|argon|sonnet|opus|oss [LEVEL]."
         )
     model, effort, _explicit = _messages.parse_agent_launch_payload(rest)
+    if harness is _harnesses.CODEX and not rest.strip() and _harnesses.for_model(model) is not harness:
+        # The default agent is another provider; plain /switch codex starts Codex's own default.
+        model = _settings.LATEST_OPENAI_CODEX_AGENT_MODEL
+        effort = _settings.LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT
     if _harnesses.for_model(model) is not harness:
         raise ValueError(f"{model} is not a {harness.label} model; /models lists the choices.")
     return harness, model, effort, model

@@ -44,7 +44,7 @@ new Telegram-specific command just to become a task.
 | `/cancel ID` | Removes a waiting message. `/cancel all` removes the queue visible here. |
 | `/interrupt NEW TASK` | Aborts the managed turn, verifies it stopped, then submits the replacement instruction. |
 | `/models` | Lists each provider's models with buttons: tap a provider, a model, then an effort level to switch without typing. Models are shown by the provider's own name. A provider this machine cannot start is marked on the first screen as not installed or needing sign-in; tapping one that needs sign-in offers a Sign in button. The Model button under `/status` opens the same picker. |
-| `/switch PROVIDER [MODEL] [LEVEL]` | Changes provider with a fresh session. `PROVIDER` is `codex`, `claude`, `dsh` or `agy`; for example `/switch claude opus max`. Defaults: Claude Fable/high, DeepSeek Harness Flash/max. |
+| `/switch PROVIDER [MODEL] [LEVEL]` | Changes provider with a fresh session. `PROVIDER` is `codex`, `claude`, `dsh` or `agy`; for example `/switch claude opus max`. Defaults: Claude Opus/medium, DeepSeek Harness Flash/max. |
 | `/update` | Shows each provider CLI's installed version and the newest published one, with buttons to update one or all. Each CLI is updated by its own updater. `/status` lists the same versions in the owner's private chat; nothing is announced unasked. |
 | `/usage [codex\|claude]` | Shows live usage limits in the owner's private chat. Without a provider it reports the running agent's. |
 | `/auth [codex\|claude] [status\|login\|logout\|cancel]` | Sign-in controls in the owner's private chat; plain `/auth` shows status. Claude login returns a browser link; paste the one-time code it shows into the chat. Codex supports `status` and `login`. |
@@ -149,7 +149,7 @@ It needs Python 3.11 or newer with `requirements.txt` installed, the same
 each provider you want to use. Every provider runs in its own program: Claude
 Code through `claude`, Codex through `codex exec`, Antigravity through `agy`
 and DeepSeek Harness through `dsh`. Set `TELEAGENT_CODEX_MODEL` in
-`config/relay.env` to the default agent, for example `cc-fable`.
+`config/relay.env` to the default agent, for example `cc-opus`.
 
 What differs from a tmux host: Codex runs without its terminal interface, so
 it has no live `/model` or `/reasoning` change and no Goal mode (use `/switch`

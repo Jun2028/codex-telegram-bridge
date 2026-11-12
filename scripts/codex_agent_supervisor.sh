@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "$SCRIPT_DIR/relay_paths.sh"
 
-MODEL="${TELEAGENT_CODEX_MODEL:-gpt-6.1-sol}"
+MODEL="${TELEAGENT_CODEX_MODEL:-cc-opus}"
 REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-}"
 CODEX_BIN="${TELEAGENT_CODEX_BIN:-codex}"
 CHECK_FOR_UPDATE_ON_STARTUP="${TELEAGENT_CODEX_CHECK_FOR_UPDATE_ON_STARTUP:-false}"
@@ -77,7 +77,7 @@ fi
 
 if [[ -z "$REASONING_EFFORT" ]]; then
   REASONING_EFFORT="high"
-  if [[ "$MODEL" == "gpt-6-astra" ]]; then
+  if [[ "$MODEL" == "gpt-6-astra" || "$MODEL" == "cc-opus" ]]; then
     REASONING_EFFORT="medium"
   fi
   if [[ "$USE_DSH" -eq 1 ]]; then

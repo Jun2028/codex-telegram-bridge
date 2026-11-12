@@ -62,9 +62,9 @@ def parse_launch_payload(payload: str) -> tuple[str, str]:
     tokens = shlex.split(payload)
     if len(tokens) > 2:
         raise ValueError("/claude accepts at most a model and effort, never a prompt")
-    model = tokens[0].lower() if tokens else "fable"
+    model = tokens[0].lower() if tokens else "opus"
     model = model if model.startswith("cc-") else "cc-" + model
-    effort = tokens[1].lower() if len(tokens) == 2 else "high"
+    effort = tokens[1].lower() if len(tokens) == 2 else "medium" if model == "cc-opus" else "high"
     if model not in MODELS:
         raise ValueError("Claude Code model must be fable, opus, sonnet, or haiku")
     if effort not in EFFORTS:

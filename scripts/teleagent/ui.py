@@ -185,7 +185,7 @@ def models_text() -> str:
         "codex — sol / latest (GPT-6.1 Sol, default), astra (GPT-6 Astra), "
         "gpt-5.6-sol, luna (GPT-5.6 Luna), spark (GPT-5.3 Codex Spark), "
         "ds-flash / ds-pro (DeepSeek V4 through Codex)\n"
-        "claude — fable (default), opus, sonnet, haiku; default level high\n"
+        "claude — opus (default, level medium), fable, sonnet, haiku; default level high\n"
         "dsh — flash (default), pro; levels off, low, high, max (default)\n"
         "agy — g-flash, argon, sonnet, opus, oss (Antigravity-hosted)\n\n"
         "Examples: /switch claude opus max, /switch codex astra xhigh, "

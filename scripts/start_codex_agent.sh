@@ -17,9 +17,9 @@ source "$SCRIPT_DIR/relay_paths.sh"
 SESSION="${TELEAGENT_TMUX_SESSION:-tele-agent}"
 WINDOW="codex"
 RESTART=0
-CODEX_MODEL="${TELEAGENT_CODEX_MODEL:-gpt-6.1-sol}"
+CODEX_MODEL="${TELEAGENT_CODEX_MODEL:-cc-opus}"
 CODEX_REASONING_EFFORT="${TELEAGENT_CODEX_REASONING_EFFORT:-high}"
-if [[ "$CODEX_MODEL" == "gpt-6-astra" && -z "${TELEAGENT_CODEX_REASONING_EFFORT:-}" ]]; then
+if [[ ( "$CODEX_MODEL" == "gpt-6-astra" || "$CODEX_MODEL" == "cc-opus" ) && -z "${TELEAGENT_CODEX_REASONING_EFFORT:-}" ]]; then
   CODEX_REASONING_EFFORT="medium"
 fi
 if tele_agent_is_dsh_model "$CODEX_MODEL" && [[ -z "${TELEAGENT_CODEX_REASONING_EFFORT:-}" ]]; then

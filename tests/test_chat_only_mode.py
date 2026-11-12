@@ -275,6 +275,7 @@ class ChatOnlyConfigTests(unittest.TestCase):
                         'TELEAGENT_CODEX_ACCESS_MODE="chat-only"',
                         f'TELEAGENT_INSTANCE_SCRATCH="{scratch}"',
                         f'TELEAGENT_CODEX_BIN="{fake_codex}"',
+                        'TELEAGENT_CODEX_MODEL="gpt-6.1-sol"',
                     )
                 )
                 + "\n",

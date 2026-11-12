@@ -391,7 +391,7 @@ class FailureReportingTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 lifecycle.AgentStartUnconfirmed, "no Codex process"
             ):
-                lifecycle.start_codex_agent(self.root, "fixture", "codex")
+                lifecycle.start_codex_agent(self.root, "fixture", "codex", model="gpt-6.1-sol")
 
     def test_reset_redemption_is_preserved_when_only_restart_fails(self):
         reset_path = self.root / "reset.json"

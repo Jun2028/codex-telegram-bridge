@@ -123,12 +123,12 @@ TELEGRAM_ROUTE_ID_RE = re.compile(
 )
 
 
-DEFAULT_CODEX_AGENT_MODEL = os.environ.get("TELEAGENT_CODEX_MODEL", "gpt-6.1-sol")
+DEFAULT_CODEX_AGENT_MODEL = os.environ.get("TELEAGENT_CODEX_MODEL", "cc-opus")
 
 
 DEFAULT_CODEX_AGENT_REASONING_EFFORT = os.environ.get(
     "TELEAGENT_CODEX_REASONING_EFFORT",
-    "medium" if DEFAULT_CODEX_AGENT_MODEL == "gpt-6-astra" else "high",
+    "medium" if DEFAULT_CODEX_AGENT_MODEL in ("gpt-6-astra", "cc-opus") else "high",
 )
 
 

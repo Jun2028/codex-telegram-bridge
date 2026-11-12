@@ -164,7 +164,7 @@ class LaunchGateTests(unittest.TestCase):
         return start, [call.args[2] for call in send.call_args_list]
 
     def test_codex_sign_in_failure_blocks_only_codex_launches(self):
-        start, replies = self.launch("/restart_agent")
+        start, replies = self.launch("/restart_agent sol")
         start.assert_not_called()
         self.assertEqual(replies, ["Codex sign-in required."])
         start, replies = self.launch("/restart_agent cc-opus max")
@@ -339,14 +339,14 @@ class ProviderCommandTests(unittest.TestCase):
         parse = provider_commands.parse_switch
         self.assertEqual(parse("/switch", "claude opus max"),
                          (harnesses.CLAUDE, "cc-opus", "max", "opus"))
-        self.assertEqual(parse("/claude", ""), (harnesses.CLAUDE, "cc-fable", "high", "fable"))
+        self.assertEqual(parse("/claude", ""), (harnesses.CLAUDE, "cc-opus", "medium", "opus"))
         self.assertEqual(parse("/switch", "dsh pro")[:3], (harnesses.DSH, "dsh-pro", "max"))
         self.assertEqual(parse("/dsh", "pro"), parse("/switch", "dsh pro"))
         self.assertEqual(parse("/switch", "agy g-flash")[:2], (harnesses.AGY, "g-flash"))
         harness, model, _effort, native = parse("/switch", "codex")
         self.assertEqual((harness, model, native),
-                         (harnesses.CODEX, settings.DEFAULT_CODEX_AGENT_MODEL,
-                          settings.DEFAULT_CODEX_AGENT_MODEL))
+                         (harnesses.CODEX, settings.LATEST_OPENAI_CODEX_AGENT_MODEL,
+                          settings.LATEST_OPENAI_CODEX_AGENT_MODEL))
         self.assertIs(parse("/switch", "CODEX astra xhigh")[0], harnesses.CODEX)
         for payload in ["", "gemini", "agy", "codex opus", "codex cc-opus", "agy astra",
                         "claude opus max extra"]:

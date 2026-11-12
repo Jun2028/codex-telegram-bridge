@@ -761,6 +761,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertIn("/models", help_text)
         self.assertNotIn("-- PROMPT", help_text)
 
+    @mock.patch.object(_relay_settings, "DEFAULT_CODEX_AGENT_MODEL", "gpt-6.1-sol")
     def test_restart_agent_passes_launch_overrides(self) -> None:
         args = argparse.Namespace(
             codex_usage_state_path=str(self.state),
@@ -926,7 +927,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         self.assertEqual(call["reasoning_effort"], "high")
         self.assertEqual(
             telegram_inbox.DEFAULT_CODEX_AGENT_MODEL,
-            "gpt-6.1-sol",
+            "cc-opus",
         )
 
     def test_restart_agent_accepts_ds_flash_with_max(self) -> None:
@@ -2247,6 +2248,7 @@ class TelegramUsageLimitTests(unittest.TestCase):
         event = json.loads(log_path.read_text(encoding="utf-8").splitlines()[-1])
         self.assertEqual(event["event"], "codex_usage_failure_notice_failed")
 
+    @mock.patch.object(_relay_settings, "DEFAULT_CODEX_AGENT_MODEL", "gpt-6.1-sol")
     def test_start_agent_is_not_blocked_by_old_usage_failure(self) -> None:
         telegram_inbox.write_json_object(
             self.state,

@@ -80,8 +80,9 @@ the private launch URL. The demo exposes only its configured demo folder.
 ## Model controls
 
 `/models` lists aliases. Use `/model NAME [LEVEL]` or `/reasoning LEVEL`.
-The managed default model is `gpt-6.1-sol` (GPT-6.1 Sol); `sol` and `latest`
-select it. `astra` selects GPT-6 Astra; the other aliases are `luna`, `spark`,
+The managed default agent is Claude Opus (`cc-opus`) at `medium` effort.
+In Codex, `sol` and `latest` select `gpt-6.1-sol` (GPT-6.1 Sol). `astra`
+selects GPT-6 Astra; the other aliases are `luna`, `spark`,
 `ds-flash` and `ds-pro`. Supported reasoning values depend on the model.
 `ds-flash` and `ds-pro` keep using the Codex harness with the DeepSeek provider.
 Use `/dsh [flash|pro] [off|low|high|max]` to switch the bot to the official
@@ -116,7 +117,7 @@ commands below (`/claude`, `/dsh`, `/claude_usage`, `/codex_usage`,
 `/auth codex` also work while Claude is the running agent.
 
 Native Claude Code is available through `/claude [fable|opus|sonnet|haiku] [LEVEL]`
-(default: Fable/high), or `/restart_agent cc-fable|cc-opus|cc-sonnet|cc-haiku [LEVEL]`.
+(default: Opus/medium), or `/restart_agent cc-fable|cc-opus|cc-sonnet|cc-haiku [LEVEL]`.
 The `claude` CLI must already be installed and signed in on that machine;
 `TELEAGENT_CLAUDE_BIN` can select its executable. Availability and authentication
 are checked before replacing the current agent. Claude keeps its exact session

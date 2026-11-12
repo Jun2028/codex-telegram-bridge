@@ -359,6 +359,7 @@ class TmuxLauncherShellTests(unittest.TestCase):
                         f"TELEAGENT_CODEX_HOME={private_home}",
                         f"TELEAGENT_INSTANCE_SCRATCH={scratch}",
                         f"TELEAGENT_INSTANCE_LOG_DIR={runtime}",
+                        "TELEAGENT_CODEX_MODEL=gpt-6.1-sol",
                     )
                 )
                 + "\n",
@@ -496,6 +497,7 @@ class PythonLifecycleShellTests(unittest.TestCase):
                 session="beta-python",
                 window="codex",
                 restart=True,
+                model="gpt-6.1-sol",
             )
 
         new_window = next(

@@ -357,7 +357,7 @@ def parse_agent_launch_payload(payload: str) -> tuple[str, str, bool]:
         else:
             reasoning_effort = (
                 "medium"
-                if model == _settings.ASTRA_CODEX_AGENT_MODEL
+                if model in (_settings.ASTRA_CODEX_AGENT_MODEL, "cc-opus")
                 else _settings.LATEST_OPENAI_CODEX_AGENT_REASONING_EFFORT
             )
     if (

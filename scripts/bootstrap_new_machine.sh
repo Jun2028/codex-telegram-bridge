@@ -143,11 +143,11 @@ if ! grep -Eq '^(export[[:space:]]+)?TELEAGENT_DS_KEY_FILE=' "$TELEAGENT_REPO/co
   printf 'export TELEAGENT_DS_KEY_FILE="%s"\n' "$key_file" >>"$TELEAGENT_REPO/config/relay.env"
 fi
 if ! grep -Eq '^(export[[:space:]]+)?TELEAGENT_CODEX_MODEL=' "$TELEAGENT_REPO/config/relay.env"; then
-  printf 'export TELEAGENT_CODEX_MODEL="deepseek-flash"\n' >>"$TELEAGENT_REPO/config/relay.env"
+  printf 'export TELEAGENT_CODEX_MODEL="cc-opus"\n' >>"$TELEAGENT_REPO/config/relay.env"
 fi
 if ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?TELEAGENT_CODEX_REASONING_EFFORT=' "$TELEAGENT_REPO/config/relay.env"; then
   bootstrap_reasoning="max"
-  if [[ "${TELEAGENT_CODEX_MODEL:-}" == "gpt-6-astra" ]]; then
+  if [[ "${TELEAGENT_CODEX_MODEL:-cc-opus}" == "gpt-6-astra" || "${TELEAGENT_CODEX_MODEL:-cc-opus}" == "cc-opus" ]]; then
     bootstrap_reasoning="medium"
   fi
   printf 'export TELEAGENT_CODEX_REASONING_EFFORT="%s"\n' "$bootstrap_reasoning" >>"$TELEAGENT_REPO/config/relay.env"
