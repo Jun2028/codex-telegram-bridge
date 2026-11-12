@@ -38,6 +38,22 @@ from . import replies as _replies
 from . import usage as _usage
 
 
+def _agent_launch_selection(
+    args: argparse.Namespace, command: str, payload: str
+) -> tuple[str, str, bool]:
+    """Plain /restart_agent keeps the running agent's model and effort."""
+    if command == "/restart_agent" and not payload.strip():
+        recorded = _lifecycle.recorded_agent_launch(args)
+        if recorded and _dsh.is_dsh_model(recorded[0]):
+            return recorded[0], recorded[1], True  # Launched by /dsh, which /restart_agent cannot name.
+        if recorded:
+            try:
+                return _messages.parse_agent_launch_payload(" ".join(filter(None, recorded)))
+            except ValueError:
+                pass  # A record this version cannot launch falls back to the default.
+    return _messages.parse_agent_launch_payload(payload)
+
+
 def handle_update(
     update: dict[str, Any],
     args: argparse.Namespace,
@@ -253,7 +269,7 @@ def handle_update(
     launch_skips_codex_auth = False
     if command in {"/start_agent", "/restart_agent"}:
         try:
-            launch_model = _messages.parse_agent_launch_payload(payload)[0]
+            launch_model = _agent_launch_selection(args, command, payload)[0]
             launch_skips_codex_auth = not _harnesses.for_model(launch_model).uses_codex_auth
         except ValueError:
             pass  # The lifecycle branch reports the malformed payload.
@@ -804,7 +820,7 @@ def handle_update(
     elif command in {"/start_agent", "/restart_agent"}:
         try:
             model, reasoning_effort, _settings_explicit = (
-                _messages.parse_agent_launch_payload(payload)
+                _agent_launch_selection(args, command, payload)
             )
             agent_present = _lifecycle.managed_codex_agent_present(args.target_pane)
             if command == "/start_agent" and agent_present:
@@ -844,6 +860,7 @@ def handle_update(
                 reasoning_effort=reasoning_effort,
             )
             args.target_pane = target_pane
+            _lifecycle.record_agent_launch(args, model, reasoning_effort)
             reply = (
                 result + "\nNormal Telegram text will now be relayed to this target."
             )
@@ -916,6 +933,7 @@ def handle_update(
                 reasoning_effort=reasoning_effort,
             )
             args.target_pane = target_pane
+            _lifecycle.record_agent_launch(args, model, reasoning_effort)
             reply = (
                 f"{label} started in {target_pane} with "
                 f"model={native_model}, reasoning={reasoning_effort or 'default'}. "
@@ -956,6 +974,7 @@ def handle_update(
                 model,
                 reasoning_effort,
             )
+            _lifecycle.record_agent_launch(args, actual_model, actual_effort)
             reply = (
                 f"Codex model switched to {actual_model} with reasoning={actual_effort}; "
                 "current chat preserved."
@@ -988,6 +1007,11 @@ def handle_update(
             actual_effort = _models.set_codex_reasoning_effort(
                 args.target_pane, reasoning_effort
             )
+            recorded = _lifecycle.recorded_agent_launch(args) or (
+                _models.current_codex_model_and_reasoning_effort(args.target_pane)
+            )
+            if recorded:
+                _lifecycle.record_agent_launch(args, recorded[0], actual_effort)
             reply = f"Codex reasoning switched to {actual_effort} in the current chat; session preserved."
             record["action"] = "reasoning"
             record["target_pane"] = args.target_pane

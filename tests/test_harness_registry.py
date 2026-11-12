@@ -172,6 +172,18 @@ class LaunchGateTests(unittest.TestCase):
         self.assertIn("Restarting Claude Code agent", replies[0])
         self.assertNotIn("Codex agent", replies[0])
 
+    def test_plain_restart_keeps_the_running_agent_model_and_effort(self):
+        start, _replies = self.launch("/restart_agent")  # Nothing recorded yet: the default.
+        self.assertEqual((start.call_args.kwargs["model"], start.call_args.kwargs["reasoning_effort"]),
+                         (settings.DEFAULT_CODEX_AGENT_MODEL, settings.DEFAULT_CODEX_AGENT_REASONING_EFFORT))
+        for launch, expected in (("/claude fable xhigh", ("cc-fable", "xhigh")),
+                                 ("/dsh pro low", ("dsh-pro", "low")),
+                                 ("/restart_agent cc-sonnet low", ("cc-sonnet", "low"))):
+            self.launch(launch)
+            start, _replies = self.launch("/restart_agent")
+            self.assertEqual((start.call_args.kwargs["model"],
+                              start.call_args.kwargs["reasoning_effort"]), expected, launch)
+
     def test_switch_is_one_command_for_every_provider(self):
         for text in ("/switch claude opus max", "/claude opus max"):
             start, replies = self.launch(text)

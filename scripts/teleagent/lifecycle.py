@@ -35,6 +35,39 @@ def agent_lifecycle_state_path(args: argparse.Namespace) -> Path | None:
     return None
 
 
+def agent_launch_state_path(args: argparse.Namespace) -> Path | None:
+    usage_state = getattr(args, "codex_usage_state_path", None)
+    if usage_state:
+        return Path(usage_state).with_name("telegram_agent_launch.state.json")
+    return None
+
+
+def record_agent_launch(args: argparse.Namespace, model: str, reasoning_effort: str) -> None:
+    """Remember the running agent's model and effort for a plain /restart_agent."""
+    path = agent_launch_state_path(args)
+    if path is None:
+        return
+    try:
+        _state.write_json_object(path, {"model": model, "reasoning_effort": reasoning_effort,
+                                        "updated_ts": int(time.time())})
+    except OSError:
+        pass  # The agent already started; only a later plain restart falls back to the default.
+
+
+def recorded_agent_launch(args: argparse.Namespace) -> tuple[str, str] | None:
+    path = agent_launch_state_path(args)
+    if path is None:
+        return None
+    try:
+        recorded = _state.read_json_object(path)
+    except _state.StateReadError:
+        return None
+    model, effort = recorded.get("model"), recorded.get("reasoning_effort")
+    if isinstance(model, str) and model and isinstance(effort, str):
+        return model, effort
+    return None
+
+
 def agent_desired_state(args: argparse.Namespace) -> str:
     path = agent_lifecycle_state_path(args)
     if path is None:

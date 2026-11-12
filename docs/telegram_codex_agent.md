@@ -35,7 +35,8 @@ The launcher starts `tele-agent:codex.0`, keeps it under the agent supervisor an
 starts/retargets the inbox. For a separate listener start, use
 `scripts/start_telegram_inbox.sh --target-pane tele-agent:codex.0`.
 `/start_agent` starts only a stopped agent; `/restart_agent` replaces only a
-running agent and starts a fresh chat. Neither accepts a task prompt.
+running agent and starts a fresh chat; without a model it keeps the running
+agent's model and effort. Neither accepts a task prompt.
 
 ## Daily use
 
@@ -91,7 +92,7 @@ reasoning `max`. The switch always starts a fresh DeepSeek Harness session; it
 does not migrate the Codex conversation. The
 running DSH pane reuses its own session id between Telegram turns when DSH
 accepts it, without a cross-process continuity guarantee. Use
-`/restart_agent` to return to a fresh Codex conversation.
+`/switch codex` to return to a fresh Codex conversation.
 
 The first `/dsh` launch installs `@deepseek-ai/dsh` into this instance's private
 `TELEAGENT_DSH_HOME/cli` when no `dsh` executable is available. This requires

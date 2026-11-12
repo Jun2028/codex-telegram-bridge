@@ -52,7 +52,7 @@ new Telegram-specific command just to become a task.
 | `/reasoning high` | Inside a Codex chat, changes effort in the current conversation. |
 | `/kill_agent` | Stops the agent persistently; Telegram controls stay online. |
 | `/start_agent [MODEL] [LEVEL]` | Starts a stopped agent. |
-| `/restart_agent [MODEL] [LEVEL]` | Replaces a running agent with a fresh conversation. |
+| `/restart_agent [MODEL] [LEVEL]` | Replaces a running agent with a fresh conversation. Without a model it keeps the running agent's model and effort. |
 | `/timed 0.5 check the experiment` | Schedules a task in half an hour. Use `/timed list` or `/timed remove N`. |
 | `/recent_messages`, `/replay_last` | Inspects or resubmits requests from this chat. |
 | `/help` | Opens the compact command guide. `/help all` lists every command. |
