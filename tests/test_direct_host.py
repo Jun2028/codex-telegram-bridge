@@ -44,7 +44,8 @@ def wait(text):
 if name == "claude":
     if args == ["auth", "status"]:
         emit({"loggedIn": True}); raise SystemExit(0)
-    text = sys.stdin.buffer.read().decode("utf-8")
+    # Streamed input stays open during the turn; the first line is the message.
+    text = json.loads(sys.stdin.buffer.readline().decode("utf-8"))["message"]["content"]
     sid = args[args.index("--resume") + 1] if "--resume" in args else str(uuid.uuid4())
     emit({"type": "system", "subtype": "init", "session_id": sid, "model": "claude-fixture"})
     wait(text)

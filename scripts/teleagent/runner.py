@@ -70,6 +70,7 @@ class SessionLog:
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
         self.path = sessions_dir / f"rollout-{harness}-{stamp}-{uuid.uuid4()}.jsonl"
         self._handle = self.path.open("a", encoding="utf-8")
+        self._write_lock = threading.Lock()
         # Hosts without /proc learn the open session log from the runner itself.
         host.announce_session(self.path)
         self.write({"type": "session_meta", "timestamp": utc_now_iso(), "payload": {
@@ -77,8 +78,10 @@ class SessionLog:
             "originator": f"tele-agent/{harness}"}})
 
     def write(self, record: dict) -> None:
-        self._handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-        self._handle.flush()
+        # Input added to a running turn is recorded from another thread.
+        with self._write_lock:
+            self._handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+            self._handle.flush()
 
     def close(self) -> None:
         self._handle.close()
@@ -96,6 +99,10 @@ class SessionLog:
 
     def turn_started(self, message: str) -> None:
         self._event({"type": "task_started", "turn_id": str(uuid.uuid4())})
+        self.user_message(message)
+
+    def user_message(self, message: str) -> None:
+        """Record user input; a message added to a running turn has no turn of its own."""
         self.write({"type": "response_item", "timestamp": utc_now_iso(), "payload": {
             "type": "message", "role": "user", "id": str(uuid.uuid4()),
             "content": [{"type": "input_text", "text": message}]}})
@@ -189,6 +196,11 @@ class AgentRunner:
         self.process: subprocess.Popen | None = None
         self.interrupted = False
         self.lock = threading.RLock()
+        # Input events from the relay. A runner that feeds messages into a running
+        # turn hands back any it could not deliver through `carry`, in order.
+        self.events: queue.Queue = queue.Queue()
+        self.carry: list[tuple[str, str]] = []
+        self.input_open = False
 
     def ready_line(self) -> str:
         return f"{self.harness.label} ready"
@@ -220,23 +232,32 @@ class AgentRunner:
         prompt: str | None,
         on_event: Callable[[dict], None],
         env: dict[str, str] | None = None,
+        keep_input: bool = False,
     ) -> tuple[int, str]:
         """Run one CLI turn and return its exit code and standard error.
 
         The prompt travels on standard input, never in the argument list, unless
         the adapter passes `prompt=None` because its CLI only takes arguments.
+        With `keep_input`, standard input stays open after the prompt so
+        `send_input` can add to the running turn until `close_input`.
         Every JSON object the CLI prints is handed to `on_event`.
         """
         with tempfile.TemporaryFile(mode="w+", encoding="utf-8", newline="") as prompt_file, \
              tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace") as errors:
-            if prompt is not None:
+            if prompt is not None and not keep_input:
                 prompt_file.write(prompt)
                 prompt_file.seek(0)
+            stdin = (subprocess.PIPE if keep_input
+                     else prompt_file if prompt is not None else subprocess.DEVNULL)
             with self.lock:
                 self.process = subprocess.Popen(
-                    command, stdin=prompt_file if prompt is not None else subprocess.DEVNULL,
+                    command, stdin=stdin,
                     stdout=subprocess.PIPE, stderr=errors, text=True, encoding="utf-8",
                     errors="replace", cwd=self.repo, env=env)
+                if keep_input:
+                    self.input_open = True
+                    if prompt is not None and not self.send_input(prompt):
+                        self.close_input()
             process = self.process
             try:
                 assert process.stdout is not None
@@ -250,6 +271,7 @@ class AgentRunner:
                 returncode = process.wait()
             finally:
                 with self.lock:
+                    self.close_input()
                     portable.stop_process(process)
                     try:
                         process.wait(timeout=5)
@@ -261,10 +283,37 @@ class AgentRunner:
             errors.seek(0)
             return returncode, errors.read()
 
+    def send_input(self, text: str) -> bool:
+        """Write to the running turn's open input; False when it no longer accepts input."""
+        with self.lock:
+            process = self.process
+            if (not self.input_open or self.interrupted or process is None
+                    or process.poll() is not None or process.stdin is None):
+                return False
+            try:
+                process.stdin.write(text)
+                process.stdin.flush()
+            except (OSError, ValueError):
+                return False
+            return True
+
+    def close_input(self) -> None:
+        """End the running turn's input; the CLI finishes what it already received."""
+        with self.lock:
+            if not self.input_open:
+                return
+            self.input_open = False
+            process = self.process
+            if process is not None and process.stdin is not None:
+                try:
+                    process.stdin.close()
+                except (OSError, ValueError):
+                    pass
+
     def serve(self) -> int:
         """Read the relay's input until end of input, running one turn per message."""
         set_process_name(self.harness.process_comm)
-        events: queue.Queue = queue.Queue()
+        events = self.events
         previous_terminal = None
         if termios is not None and os.isatty(0):
             # Under tmux: read keys unbuffered and ask for bracketed pastes.
@@ -280,7 +329,7 @@ class AgentRunner:
         print(self.ready_line(), flush=True)
         try:
             while True:
-                kind, value = events.get()
+                kind, value = self.carry.pop(0) if self.carry else events.get()
                 if kind == "eof":
                     return 0
                 if kind == "message":

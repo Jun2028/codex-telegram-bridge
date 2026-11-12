@@ -54,7 +54,7 @@ if '--no-session-persistence' in sys.argv:
     assert sys.stdin.read()!='/usage'
     print(json.dumps({'type':'rate_limit_event','rate_limit_info':{'status':'allowed','unifiedWindows':{
         'five_hour':{'utilization':.17,'resetsAt':1900000000,'status':'allowed'}}}}));raise SystemExit(0)
-args=sys.argv[1:];text=sys.stdin.read()
+args=sys.argv[1:];text=json.loads(sys.stdin.readline())['message']['content']
 sid=args[args.index('--resume')+1] if '--resume' in args else str(uuid.uuid4())
 print(json.dumps({'type':'system','subtype':'init','session_id':sid,'model':'claude-sonnet-fixture'}),flush=True)
 if 'sleep 30' in text:

@@ -38,22 +38,39 @@ import json,sys,time
 if sys.argv[1:] == ['auth','status']:
     raise SystemExit(0)
 args=sys.argv[1:]
-prompt=sys.stdin.read()
+assert args[args.index('--input-format')+1] == 'stream-json'
+def read():
+    # Streamed input: one JSON user message per line until the runner closes it.
+    line=sys.stdin.readline()
+    if not line:
+        return None
+    event=json.loads(line)
+    assert event['type'] == 'user' and event['message']['role'] == 'user'
+    return event['message']['content']
 sid=args[args.index('--resume')+1] if '--resume' in args else 'session-one'
-print(json.dumps({'type':'system','subtype':'init','session_id':sid,'model':'claude-sonnet-fixture'}),flush=True)
-if prompt == 'wait':
-    time.sleep(30)
-if prompt == 'missing':
-    raise SystemExit(0)
 if '--effort' in args and args[args.index('--effort')+1] == 'ultracode':
     print("Warning: Unknown --effort value 'ultracode' - ignoring it and using the default effort.", file=sys.stderr)
-print(json.dumps({'type':'assistant','parent_tool_use_id':'child','message':{'content':[{'type':'text','text':'private child response'}]}}))
-if prompt == 'progress':
-    print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'Checking the files.'}]}}),flush=True)
-    print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'Bash','input':{}}]}}),flush=True)
-    print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'t1','content':'ok'}]}}),flush=True)
-    print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'answer:progress'}]}}),flush=True)
-print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error','session_id':sid,'result':'answer:'+prompt}),flush=True)
+prompt=read()
+while prompt is not None:
+    print(json.dumps({'type':'system','subtype':'init','session_id':sid,'model':'claude-sonnet-fixture'}),flush=True)
+    if prompt == 'wait':
+        time.sleep(30)
+    if prompt == 'missing':
+        raise SystemExit(0)
+    answer='answer:'+prompt
+    if prompt == 'steer':
+        # A message added mid-turn joins this turn's answer.
+        answer+='+'+read()
+    if prompt == 'late':
+        time.sleep(1)  # A message sent now arrives after this turn's answer.
+    print(json.dumps({'type':'assistant','parent_tool_use_id':'child','message':{'content':[{'type':'text','text':'private child response'}]}}))
+    if prompt == 'progress':
+        print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'Checking the files.'}]}}),flush=True)
+        print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'Bash','input':{}}]}}),flush=True)
+        print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'t1','content':'ok'}]}}),flush=True)
+        print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'answer:progress'}]}}),flush=True)
+    print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error','session_id':sid,'result':answer}),flush=True)
+    prompt=read()
 ''')
         self.binary.chmod(0o755)
         (self.root / "AGENTS.md").write_text("Original instructions.\n")
@@ -105,6 +122,30 @@ print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error'
         replies = [v for v in (delivery.codex_agent_message(e) for e in self.events(agent)) if v]
         self.assertEqual(replies, [("Checking the files.", "commentary"),
                                    ("answer:progress", "final_answer")])
+
+    def test_message_sent_mid_turn_joins_the_running_turn(self):
+        agent = self.new_runner()
+        thread = threading.Thread(target=agent.run_message, args=("steer",))
+        thread.start()
+        agent.events.put(("message", "more"))
+        thread.join(timeout=20)
+        self.assertFalse(thread.is_alive())
+        replies = [v for v in (delivery.codex_agent_message(e) for e in self.events(agent)) if v]
+        self.assertEqual(replies, [("answer:steer+more", "final_answer")])
+        self.assertTrue(submission.wait_for_codex_submission((agent.log.path, 0), "more", timeout=0))
+        self.assertEqual(agent.carry, [])
+        self.assertFalse(submission.codex_session_turn_active(agent.log.path))
+
+    def test_message_arriving_as_the_turn_ends_gets_its_own_answer(self):
+        agent = self.new_runner()
+        thread = threading.Thread(target=agent.run_message, args=("late",))
+        thread.start()
+        agent.events.put(("message", "second"))
+        thread.join(timeout=20)
+        self.assertFalse(thread.is_alive())
+        replies = [v for v in (delivery.codex_agent_message(e) for e in self.events(agent)) if v]
+        self.assertEqual(replies, [("answer:late", "final_answer"), ("answer:second", "final_answer")])
+        self.assertEqual(agent.carry, [])
 
     def test_no_result_or_provider_error_never_becomes_success(self):
         for prompt in ["missing", "error"]:

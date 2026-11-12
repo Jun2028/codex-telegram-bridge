@@ -6,8 +6,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import queue
 import subprocess
 import sys
+import threading
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -72,11 +74,19 @@ class ClaudeAgentRunner(AgentRunner):
         # Root text waits for the next event: if the turn continues it was an
         # intermediate message, and if the result follows it is the final answer.
         pending: list[str] = []
+        # Answers wait for the end of the CLI run, so a startup notice precedes
+        # them, or for a later answer's turn to begin.
+        answers: list[str] = []
 
         def flush_pending() -> None:
             for text in pending:
                 self.log.agent_message(text, phase="commentary")
             pending.clear()
+
+        def flush_answers() -> None:
+            for text in answers:
+                self.log.agent_message(text, phase="final_answer")
+            answers.clear()
 
         def on_event(event: dict) -> None:
             if event.get("type") != "result":
@@ -91,6 +101,7 @@ class ClaudeAgentRunner(AgentRunner):
                 if text:
                     pending.append(text)
             if event.get("type") == "system" and event.get("subtype") == "init":
+                flush_answers()  # A message that arrived as the last turn ended starts another.
                 self.save_session(event["session_id"])
                 if event.get("model"):
                     self.log.turn_context(str(event["model"]), self.effort)
@@ -100,9 +111,41 @@ class ClaudeAgentRunner(AgentRunner):
                     self.save_session(event["session_id"])
                 result.clear()
                 result.update(event)
+                if not event.get("is_error") and event.get("subtype") == "success":
+                    final = str(event.get("result") or "")
+                    if pending and pending[-1].split() == final.split():
+                        pending.pop()  # The result repeats the closing message.
+                    flush_pending()
+                    answers.append(final)
+                # The CLI still answers what it already received, then exits.
+                self.close_input()
 
+        def feed_messages() -> None:
+            """Add Telegram messages that arrive mid-turn to the running turn."""
+            while not done.is_set() and not self.input_open:
+                done.wait(0.02)  # Until the CLI has started and received the first message.
+            while not done.is_set() and self.input_open:
+                try:
+                    kind, value = self.events.get(timeout=0.1)
+                except queue.Empty:
+                    continue
+                if kind == "message" and self.send_input(claude.input_line(value)):
+                    self.log.user_message(value)
+                elif kind != "interrupt":  # The key reader already interrupted the turn.
+                    self.carry.append((kind, value))
+                    if kind == "eof":
+                        return
+
+        done = threading.Event()
+        feeder = threading.Thread(target=feed_messages, daemon=True)
+        feeder.start()
         try:
-            returncode, stderr = self.stream(command, prompt=message, on_event=on_event)
+            try:
+                returncode, stderr = self.stream(command, prompt=claude.input_line(message),
+                                                 on_event=on_event, keep_input=True)
+            finally:
+                done.set()
+                feeder.join()
             if claude.UNKNOWN_EFFORT_WARNING in stderr and not self.effort_warned:
                 # The CLI ignores an effort it does not know and still exits 0.
                 self.effort_warned = True
@@ -112,15 +155,11 @@ class ClaudeAgentRunner(AgentRunner):
                     phase="commentary")
             succeeded = (not self.interrupted and returncode == 0 and not result.get("is_error")
                          and result.get("subtype") == "success")
-            final = str(result.get("result") or "")
-            if succeeded and pending and pending[-1].split() == final.split():
-                pending.pop()  # The result repeats the closing message.
             flush_pending()
+            flush_answers()
             if self.interrupted:
                 self.log.agent_message("Claude Code turn interrupted.", phase="commentary")
-            elif succeeded:
-                self.log.agent_message(final, phase="final_answer")
-            else:
+            elif not succeeded:
                 # Do not forward provider stderr, tool input, or credential-bearing URLs.
                 subtype = str(result.get("subtype") or "missing result")
                 detail = subtype if subtype in KNOWN_FAILURES else f"exit {returncode}"
@@ -133,6 +172,7 @@ class ClaudeAgentRunner(AgentRunner):
             self.log.agent_message("Claude Code turn failed; inspect local diagnostics.", phase="commentary")
         finally:
             flush_pending()
+            flush_answers()
             self.log.turn_finished(aborted=self.interrupted)
 
 

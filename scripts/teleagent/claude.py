@@ -218,9 +218,16 @@ def authentication_status() -> str:
         return "Claude Code authentication check unavailable"
 
 
+def input_line(text: str) -> str:
+    """One user message in the CLI's streamed input format."""
+    return json.dumps({"type": "user", "message": {"role": "user", "content": text}}) + "\n"
+
+
 def build_turn_command(binary: str, model: str, effort: str,
                        instructions: Path, session_id: str = "") -> list[str]:
-    command = [binary, "--print", "--output-format", "stream-json", "--verbose",
+    # Streamed input lets messages that arrive mid-turn join the running turn.
+    command = [binary, "--print", "--input-format", "stream-json",
+               "--output-format", "stream-json", "--verbose",
                "--model", native_model(model), "--effort", effort,
                "--dangerously-skip-permissions", "--append-system-prompt-file", str(instructions)]
     if session_id:
