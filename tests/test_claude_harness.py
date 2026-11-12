@@ -48,6 +48,11 @@ if prompt == 'missing':
 if '--effort' in args and args[args.index('--effort')+1] == 'ultracode':
     print("Warning: Unknown --effort value 'ultracode' - ignoring it and using the default effort.", file=sys.stderr)
 print(json.dumps({'type':'assistant','parent_tool_use_id':'child','message':{'content':[{'type':'text','text':'private child response'}]}}))
+if prompt == 'progress':
+    print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'Checking the files.'}]}}),flush=True)
+    print(json.dumps({'type':'assistant','message':{'content':[{'type':'tool_use','id':'t1','name':'Bash','input':{}}]}}),flush=True)
+    print(json.dumps({'type':'user','message':{'content':[{'type':'tool_result','tool_use_id':'t1','content':'ok'}]}}),flush=True)
+    print(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':'answer:progress'}]}}),flush=True)
 print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error','session_id':sid,'result':'answer:'+prompt}),flush=True)
 ''')
         self.binary.chmod(0o755)
@@ -93,6 +98,13 @@ print(json.dumps({'type':'result','subtype':'success','is_error':prompt=='error'
                                             agent.instructions, restarted.session_id)
         self.assertEqual(command[-2:], ["--resume", "session-one"])
         self.assertNotIn(marker, command)
+
+    def test_intermediate_text_is_commentary_and_final_is_not_repeated(self):
+        agent = self.new_runner()
+        agent.run_message("progress")
+        replies = [v for v in (delivery.codex_agent_message(e) for e in self.events(agent)) if v]
+        self.assertEqual(replies, [("Checking the files.", "commentary"),
+                                   ("answer:progress", "final_answer")])
 
     def test_no_result_or_provider_error_never_becomes_success(self):
         for prompt in ["missing", "error"]:

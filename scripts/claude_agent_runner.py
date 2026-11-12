@@ -69,10 +69,27 @@ class ClaudeAgentRunner(AgentRunner):
         command = claude.build_turn_command(self.binary, self.model, self.effort,
                                             self.instructions, self.session_id)
         result: dict = {}
+        # Root text waits for the next event: if the turn continues it was an
+        # intermediate message, and if the result follows it is the final answer.
+        pending: list[str] = []
+
+        def flush_pending() -> None:
+            for text in pending:
+                self.log.agent_message(text, phase="commentary")
+            pending.clear()
 
         def on_event(event: dict) -> None:
+            if event.get("type") != "result":
+                flush_pending()
             if event.get("parent_tool_use_id"):
                 return  # Child-agent text must not become the root answer.
+            if event.get("type") == "assistant":
+                content = (event.get("message") or {}).get("content") or []
+                text = "\n\n".join(str(block.get("text") or "").strip() for block in content
+                                   if isinstance(block, dict) and block.get("type") == "text"
+                                   and str(block.get("text") or "").strip())
+                if text:
+                    pending.append(text)
             if event.get("type") == "system" and event.get("subtype") == "init":
                 self.save_session(event["session_id"])
                 if event.get("model"):
@@ -93,10 +110,16 @@ class ClaudeAgentRunner(AgentRunner):
                     f"This Claude Code version does not support effort '{self.effort}' and "
                     "is using its default effort. Start a fresh /claude with a supported level.",
                     phase="commentary")
+            succeeded = (not self.interrupted and returncode == 0 and not result.get("is_error")
+                         and result.get("subtype") == "success")
+            final = str(result.get("result") or "")
+            if succeeded and pending and pending[-1].split() == final.split():
+                pending.pop()  # The result repeats the closing message.
+            flush_pending()
             if self.interrupted:
                 self.log.agent_message("Claude Code turn interrupted.", phase="commentary")
-            elif returncode == 0 and not result.get("is_error") and result.get("subtype") == "success":
-                self.log.agent_message(str(result.get("result") or ""), phase="final_answer")
+            elif succeeded:
+                self.log.agent_message(final, phase="final_answer")
             else:
                 # Do not forward provider stderr, tool input, or credential-bearing URLs.
                 subtype = str(result.get("subtype") or "missing result")
@@ -109,6 +132,7 @@ class ClaudeAgentRunner(AgentRunner):
             print(f"Claude Code turn failed: {safe[:250]}", flush=True)
             self.log.agent_message("Claude Code turn failed; inspect local diagnostics.", phase="commentary")
         finally:
+            flush_pending()
             self.log.turn_finished(aborted=self.interrupted)
 
 
